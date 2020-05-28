@@ -15,6 +15,7 @@ import (
 var myPeerNo int   // the position of my ip:port in the peers.txt, given as a cmdline arg
 var myIP string    // my IP, read from peers.txt
 var myPort string  // my port, read from peers.txt
+var myName string  // my name, such as Alice, Bob, etc.
 var peers []string // holds the list of ip and ports from peers.txt except my own
 
 ////////////////////////////// 1: MAIN ///////////////////////////////////////////
@@ -33,8 +34,9 @@ func main() {
 	checkError(err)
 	for i, line := range ipandports {
 		if i == myPeerNo-1 {
-			myIP = strings.Split(line, ":")[0]
-			myPort = strings.Split(line, ":")[1]
+			myName = strings.Split(line, " ")[1]
+			myIP = strings.Split(strings.Split(line, " ")[0], ":")[0]
+			myPort = strings.Split(strings.Split(line, " ")[0], ":")[1]
 		} else {
 			peersToConnect = append(peersToConnect, line)
 		}
@@ -62,10 +64,54 @@ func main() {
 
 ////////////////////////////// 2: COMMUNICATOR ///////////////////////////////////
 func communicatorRoutine(peersToConnect []string) {
-	peerClients := connectToPeers(peersToConnect)
-	/// TODO TODO TODO ///
+	// Connect to peer in the peers.txt
+	peerClients, peerNos, peerNames := connectToPeers(peersToConnect)
 	fmt.Printf("All %d peers are connected here!\n\n", len(peerClients)+1)
 
+	// Start the infinite loop for user interface
+	var choicePeerClient *rpc.Client
+	var choicePeerName string
+	scanner := bufio.NewScanner(os.Stdin)
+	for {
+		fmt.Printf("\nDear %s, please choose a client for your transaction.\n", myName)
+		for i := 1; i <= len(peerNos); i++ {
+			fmt.Printf("\t%d) %s\n", i, peerNames[i-1])
+		}
+		fmt.Printf("Enter a number: > ")
+		errForInput := true
+		input := 0
+		for errForInput {
+			var err error
+			errForInput = false
+			scanner.Scan()
+			input, err = strconv.Atoi(scanner.Text())
+			if err != nil || input <= 0 || input > len(peerClients) {
+				errForInput = true
+				fmt.Printf("\nBad input, try again: > ")
+			}
+		}
+		// User made a choice
+		input-- // maps the choice to index (1..N) to (0..N-1)
+		choicePeerClient = peerClients[input]
+		choicePeerName = peerNames[input]
+		fmt.Printf("\nDear %s, please enter how much credits would you like transfer to %s:\n\t> ", myName, choicePeerName)
+		errForInput = true
+		input = 0
+		for errForInput {
+			var err error
+			errForInput = false
+			scanner.Scan()
+			input, err = strconv.Atoi(scanner.Text())
+			if err != nil || input <= 0 {
+				errForInput = true
+				fmt.Printf("Bad input, try again: > ")
+			}
+		}
+		// User chose an amount
+		fmt.Printf("\nCommitting transaction:\n\t%s sends %d to %s\n", myName, input, choicePeerName)
+		// TODO TODO TODO HASHGRAPH
+		choicePeerClient = choicePeerClient // done to avoid the not-used error so we can actually run this :)
+	}
 }
 
 ////////////////////////////// 3: AUXILLARIES ////////////////////////////////////
@@ -103,23 +149,28 @@ func terminateAll() {
 }
 */
 
-func connectToPeers(peersToConnect []string) []*rpc.Client {
+func connectToPeers(peersToConnect []string) ([]*rpc.Client, []int, []string) {
 	// Attempt to connect to all the peers in a cyclic fashion
 	time.Sleep(500 * time.Millisecond)
 	var peerClients []*rpc.Client
+	var peerNos []int
+	var peerNames []string
 	i := 0
 	for {
-		client, err := rpc.Dial("tcp", peersToConnect[i]) // connecting to the service
+		client, err := rpc.Dial("tcp", strings.Split(peersToConnect[i], " ")[0]) // connecting to the service
 		if err != nil {
 			// Error occured but it is ok, maybe other servers are setting up at the moment
-			fmt.Printf("Dialed %s but no response...\n", peersToConnect[i])
+			fmt.Printf("Dialed %s but no response...\n", strings.Split(peersToConnect[i], " ")[0])
 			// Delay just a bit
 			time.Sleep(500 * time.Millisecond)
 		} else {
 			// Connection established
-			fmt.Printf("Connected to %s\n", peersToConnect[i])
-			peersToConnect = append(peersToConnect[:i], peersToConnect[i+1:]...)
+			fmt.Printf("Connected to %s\n", strings.Split(peersToConnect[i], " ")[0])
 			peerClients = append(peerClients, client)
+			peerNos = append(peerNos, i+1)
+			peerNames = append(peerNames, strings.Split(peersToConnect[i], " ")[1])
+			peersToConnect = append(peersToConnect[:i], peersToConnect[i+1:]...)
+
 		}
 
 		if len(peersToConnect) != 0 {
@@ -129,5 +180,5 @@ func connectToPeers(peersToConnect []string) []*rpc.Client {
 		}
 
 	}
-	return peerClients
+	return peerClients, peerNos, peerNames
 }

@@ -12,5 +12,6 @@ echo "Peer ip and ports:"
 cat ./peers.txt
 echo " "
 echo "Succesfully created folders for peers and copied files."
+echo " "
 
 
