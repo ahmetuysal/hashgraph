@@ -21,9 +21,7 @@ var peers map[string]Peer // dictionary with key as ip:port and value as Peer st
 //Transaction : A transaction in an Event of Hashgraph
 type Transaction struct {
 	senderAddress   string  // ip:port of sender
-	senderName      string  // name of sender
 	recieverAddress string  // ip:port of receiver
-	receiverName    string  // name of receiver
 	amount          float64 // amount
 }
 
@@ -82,7 +80,7 @@ func main() {
 
 	// Branch into the communicator routine
 	go communicatorRoutine(peersToConnect)
-	// perhaps we need another routine for random gossips?
+	// perhaps we need another routine for random gossips? // TODO Gossip routine
 
 	// Serve RPC connections
 	for {
@@ -186,8 +184,8 @@ func terminateAll() {
 // Connects to the list of addresses, returns their Client object pointers, numbers and names.
 func connectToPeers(peersToConnect []string) {
 	// Attempt to connect to all the peers in a cyclic fashion
-	time.Sleep(500 * time.Millisecond) // Initialize the map
-	peers = make(map[string]Peer)
+	time.Sleep(500 * time.Millisecond)
+	peers = make(map[string]Peer) // Initialize the map
 	i := 0
 	for {
 		client, err := rpc.Dial("tcp", strings.Split(peersToConnect[i], " ")[0]) // connecting to the service
