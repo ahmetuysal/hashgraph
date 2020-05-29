@@ -12,11 +12,42 @@ import (
 )
 
 ////////////////////////////// 0: GLOBALS ////////////////////////////////////////
-var myPeerNo int   // the position of my ip:port in the peers.txt, given as a cmdline arg
-var myIP string    // my IP, read from peers.txt
-var myPort string  // my port, read from peers.txt
-var myName string  // my name, such as Alice, Bob, etc.
-var peers []string // holds the list of ip and ports from peers.txt except my own
+var myPeerNo int          // the position of my ip:port in the peers.txt, given as a cmdline arg
+var myIP string           // my IP, read from peers.txt
+var myPort string         // my port, read from peers.txt
+var myName string         // my name, such as Alice, Bob, etc.
+var peers map[string]Peer // dictionary with key as ip:port and value as Peer struct
+
+//Transaction : A transaction in an Event of Hashgraph
+type Transaction struct {
+	senderAddress   string  // ip:port of sender
+	senderName      string  // name of sender
+	recieverAddress string  // ip:port of receiver
+	receiverName    string  // name of receiver
+	amount          float64 // amount
+}
+
+//Event : An Event is a point in the Hashgraph
+type Event struct {
+	signature       string         // Event should be signed by it's creator
+	selfParentHash  string         // Hash of the self-parent, which is the hash for the event before this event in my timeline.
+	otherParentHash string         // Hash of the other-parent, which is the hash for the last event of the peer that called me.
+	timestamp       int            // Should we use vector clocks for this? Or, what to the authors use?
+	transactions    *[]Transaction // List of transactions for this event, size can be 0 too.
+}
+
+//Hashgraph : Each peer holds a copy of the Hashgraph in their memory.
+type Hashgraph struct {
+	events *[]Event // Hashgraph holds the list of events
+}
+
+//Peer : A Peer has a name, a number from my perspective, an address and a responding Client object for me to communicate with
+type Peer struct {
+	address string      // ip:port of the peer
+	name    string      // name of the peer (Alice, Bob, etc.)
+	pClient *rpc.Client // pointer to the Client object
+	no      int         // number of the peer from my perspective
+}
 
 ////////////////////////////// 1: MAIN ///////////////////////////////////////////
 func main() {
@@ -51,6 +82,7 @@ func main() {
 
 	// Branch into the communicator routine
 	go communicatorRoutine(peersToConnect)
+	// perhaps we need another routine for random gossips?
 
 	// Serve RPC connections
 	for {
@@ -58,59 +90,61 @@ func main() {
 		if err != nil {
 			continue
 		}
-		go rpc.ServeConn(conn) // it is important for this to be a goroutine
+		go rpc.ServeConn(conn)
 	}
 }
 
 ////////////////////////////// 2: COMMUNICATOR ///////////////////////////////////
 func communicatorRoutine(peersToConnect []string) {
 	// Connect to peer in the peers.txt
-	peerClients, peerNos, peerNames := connectToPeers(peersToConnect)
-	fmt.Printf("All %d peers are connected here!\n\n", len(peerClients)+1)
+	connectToPeers(peersToConnect)
+	fmt.Printf("All %d peers are connected here!\n\n", len(peers)+1) // +1 including me :)
 
 	// Start the infinite loop for user interface
-	var choicePeerClient *rpc.Client
-	var choicePeerName string
+	var input int
+	var amount float64
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Printf("\nDear %s, please choose a client for your transaction.\n", myName)
-		for i := 1; i <= len(peerNos); i++ {
-			fmt.Printf("\t%d) %s\n", i, peerNames[i-1])
+		for _, peerObject := range peers {
+			fmt.Printf("\t%d) %s\n", peerObject.no, peerObject.name)
 		}
 		fmt.Printf("Enter a number: > ")
 		errForInput := true
-		input := 0
 		for errForInput {
 			var err error
 			errForInput = false
 			scanner.Scan()
 			input, err = strconv.Atoi(scanner.Text())
-			if err != nil || input <= 0 || input > len(peerClients) {
+			if err != nil || input <= 0 || input > len(peers) {
 				errForInput = true
 				fmt.Printf("\nBad input, try again: > ")
 			}
 		}
 		// User made a choice
-		input-- // maps the choice to index (1..N) to (0..N-1)
-		choicePeerClient = peerClients[input]
-		choicePeerName = peerNames[input]
-		fmt.Printf("\nDear %s, please enter how much credits would you like transfer to %s:\n\t> ", myName, choicePeerName)
+		var chosenPeer *Peer
+		for _, peerObject := range peers {
+			input--
+			if input == 0 {
+				// We choose this peer
+				chosenPeer = &peerObject
+			}
+		}
+		fmt.Printf("\nDear %s, please enter how much credits would you like transfer to %s:\n\t> ", myName, chosenPeer.name)
 		errForInput = true
-		input = 0
 		for errForInput {
 			var err error
 			errForInput = false
 			scanner.Scan()
-			input, err = strconv.Atoi(scanner.Text())
-			if err != nil || input <= 0 {
+			amount, err = strconv.ParseFloat(scanner.Text(), 64)
+			if err != nil || amount <= 0 {
 				errForInput = true
 				fmt.Printf("Bad input, try again: > ")
 			}
 		}
 		// User chose an amount
-		fmt.Printf("\nCommitting transaction:\n\t%s sends %d to %s\n", myName, input, choicePeerName)
-		// TODO TODO TODO HASHGRAPH
-		choicePeerClient = choicePeerClient // done to avoid the not-used error so we can actually run this :)
+		fmt.Printf("\nCommitting transaction:\n\t%s sends %f to %s\n", myName, amount, chosenPeer.name)
+		// TODO TODO TODO HASHGRAPH TRANSACTION EVENTS AND STUFF
 	}
 }
 
@@ -149,12 +183,11 @@ func terminateAll() {
 }
 */
 
-func connectToPeers(peersToConnect []string) ([]*rpc.Client, []int, []string) {
+// Connects to the list of addresses, returns their Client object pointers, numbers and names.
+func connectToPeers(peersToConnect []string) {
 	// Attempt to connect to all the peers in a cyclic fashion
-	time.Sleep(500 * time.Millisecond)
-	var peerClients []*rpc.Client
-	var peerNos []int
-	var peerNames []string
+	time.Sleep(500 * time.Millisecond) // Initialize the map
+	peers = make(map[string]Peer)
 	i := 0
 	for {
 		client, err := rpc.Dial("tcp", strings.Split(peersToConnect[i], " ")[0]) // connecting to the service
@@ -166,19 +199,14 @@ func connectToPeers(peersToConnect []string) ([]*rpc.Client, []int, []string) {
 		} else {
 			// Connection established
 			fmt.Printf("Connected to %s\n", strings.Split(peersToConnect[i], " ")[0])
-			peerClients = append(peerClients, client)
-			peerNos = append(peerNos, i+1)
-			peerNames = append(peerNames, strings.Split(peersToConnect[i], " ")[1])
-			peersToConnect = append(peersToConnect[:i], peersToConnect[i+1:]...)
-
+			peers[peersToConnect[i]] = Peer{address: strings.Split(peersToConnect[i], " ")[0], name: strings.Split(peersToConnect[i], " ")[1], no: i + 1, pClient: client} // add struct to the dictionary
+			peersToConnect = append(peersToConnect[:i], peersToConnect[i+1:]...)                                                                                           // update the list of remaining peers to connect
 		}
-
 		if len(peersToConnect) != 0 {
 			i = (i + 1) % len(peersToConnect)
 		} else {
 			break
 		}
-
 	}
-	return peerClients, peerNos, peerNames
+	// We do not return anything here because the peers dictionary is global and we update it
 }
