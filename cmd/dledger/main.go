@@ -4,10 +4,12 @@ import (
     "../../pkg/hashgraph"
     "bufio"
     "fmt"
+    "math/rand"
     "net"
     "net/rpc"
     "os"
     "strings"
+    "time"
 )
 
 const (
@@ -25,19 +27,27 @@ func main() {
     if len(os.Args) > 1 {
         port = os.Args[1]
     }
+
     localIPAddress := getLocalAddress()
-
     myAddress := localIPAddress + ":" + port
-    peerAddresses := readPeerAddresses("peers.txt", localIPAddress)
+    // Read peer address to name map from file
+    peerAddressMap := readPeerAddresses("peers.txt", localIPAddress)
 
-    _, ok := peerAddresses[myAddress]
-
+    // Validate your own address is on the peers file
+    _, ok := peerAddressMap[myAddress]
     if !ok {
         panic("Peers file does not include my address: " + myAddress)
     }
 
+    // Copy peer addresses to a slice to get random addresses for gossiping
+    peerAddresses := make([]string, len(peerAddressMap))
+    i := 0
+    for k := range peerAddressMap {
+        peerAddresses[i] = k
+        i++
+    }
 
-    initialHashgraph := make(map[string][]hashgraph.Event, len(peerAddresses))
+    initialHashgraph := make(map[string][]hashgraph.Event, len(peerAddressMap))
     // TODO: create initial event
     initialEvent := hashgraph.Event{
         Signature:       "",
@@ -47,7 +57,7 @@ func main() {
         Transactions:    nil,
     }
 
-    for addr := range peerAddresses {
+    for addr := range peerAddressMap {
         initialHashgraph[addr] = make([]hashgraph.Event, 0)
     }
 
@@ -65,18 +75,39 @@ func main() {
 
     // TODO: wait until all nodes are online
 
-    go hashgraphMain(myNode)
+    time.Sleep(10000 * time.Millisecond)
+
+    go hashgraphMain(myNode, peerAddresses)
 
     // TODO: our application I/O logic
 
-    fmt.Printf("%s\n", peerAddresses)
+    fmt.Printf("%s\n", peerAddressMap)
+
+    for {
+        continue
+    }
 
 }
 
-func hashgraphMain(node hashgraph.Node) {
+func hashgraphMain(node hashgraph.Node, peerAddresses []string) {
     for {
-        // TODO: select a node at random
-        // TODO: sync all events with that node
+        randomPeer := peerAddresses[rand.Intn(len(peerAddresses))]
+        knownEventNums := make(map[string]int, len(node.Hashgraph))
+
+        for addr := range node.Hashgraph {
+            knownEventNums[addr] = len(node.Hashgraph[addr])
+        }
+
+        peerRpcConnection, err := rpc.Dial("tcp", randomPeer)
+        handleError(err)
+        numEventsToSend := make(map[string]int, len(node.Hashgraph))
+        _ = peerRpcConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend)
+        _ = peerRpcConnection.Close()
+
+        fmt.Printf("%+x \n", numEventsToSend)
+
+        time.Sleep(5000 * time.Millisecond)
+
         // TODO: create a new event
         node.DivideRounds()
         node.DecideFame()
