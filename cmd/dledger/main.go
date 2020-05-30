@@ -50,7 +50,7 @@ func main() {
     initialHashgraph := make(map[string][]hashgraph.Event, len(peerAddressMap))
     // TODO: create initial event
     initialEvent := hashgraph.Event{
-        Signature:       "",
+        Signature:       time.Now().String(),
         SelfParentHash:  "",
         OtherParentHash: "",
         Timestamp:       0,
@@ -84,8 +84,19 @@ func main() {
 }
 
 func hashgraphMain(node hashgraph.Node, peerAddresses []string) {
+    otherPeers := make([]string, len(peerAddresses)-1)
+
+    i := 0
+    for _, addr := range peerAddresses {
+        if addr != node.Address {
+            otherPeers[i] = addr
+            i++
+        }
+    }
+
     for {
-        randomPeer := peerAddresses[rand.Intn(len(peerAddresses))]
+        randomPeer := otherPeers[rand.Intn(len(otherPeers))]
+
         knownEventNums := make(map[string]int, len(node.Hashgraph))
 
         for addr := range node.Hashgraph {
@@ -99,17 +110,28 @@ func hashgraphMain(node hashgraph.Node, peerAddresses []string) {
         handleError(err)
         numEventsToSend := make(map[string]int, len(node.Hashgraph))
         _ = peerRpcConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend)
-        _ = peerRpcConnection.Close()
 
         fmt.Print("Events to send: ")
         fmt.Println(numEventsToSend)
 
+        missingEvents := make(map[string][]hashgraph.Event, len(numEventsToSend))
+        for addr := range numEventsToSend {
+            if numEventsToSend[addr] > 0 {
+                totalNumEvents := len(node.Hashgraph[addr])
+                missingEvents[addr] = node.Hashgraph[addr][totalNumEvents-numEventsToSend[addr]:]
+            }
+        }
+
+        syncEventsDTO := hashgraph.SyncEventsDTO{
+            SenderAddress: node.Address,
+            MissingEvents: missingEvents,
+        }
+
+        _ = peerRpcConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil)
+        _ = peerRpcConnection.Close()
+
         time.Sleep(5 * time.Second)
 
-        // TODO: create a new event
-        node.DivideRounds()
-        node.DecideFame()
-        node.FindOrder()
     }
 }
 
