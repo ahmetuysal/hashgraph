@@ -21,7 +21,7 @@ var peers map[string]Peer // dictionary with key as ip:port and value as Peer st
 //Transaction : A transaction in an Event of Hashgraph
 type Transaction struct {
     senderAddress   string  // ip:port of sender
-    recieverAddress string  // ip:port of receiver
+    receiverAddress string  // ip:port of receiver
     amount          float64 // amount
 }
 
