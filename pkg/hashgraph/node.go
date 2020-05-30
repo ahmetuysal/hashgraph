@@ -4,12 +4,13 @@ import "time"
 
 type Node struct {
     Address   string             // ip:port of the peer
-    Hashgraph map[string][]Event // local copy of hashgraph, i.e, events all nodes
+    Hashgraph map[string][]Event // local copy of hashgraph, map to peer address -> peer events
 }
 
+// data transfer struct for Gossip
 type SyncEventsDTO struct {
     SenderAddress string
-    MissingEvents map[string][]Event
+    MissingEvents map[string][]Event // all missing events, map to peer address -> all events I don't know about this peer
 }
 
 func (n *Node) GetNumberOfMissingEvents(numEventsAlreadyKnown map[string]int, numEventsToSend *map[string]int) error {
