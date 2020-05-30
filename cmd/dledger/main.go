@@ -9,7 +9,6 @@ import (
     "net/rpc"
     "os"
     "strings"
-    "time"
 )
 
 const (
@@ -73,15 +72,9 @@ func main() {
     listener, _ := net.ListenTCP("tcp", tcpAddr)
     go listenForRPCConnections(listener)
 
-    // TODO: wait until all nodes are online
-
-    time.Sleep(10000 * time.Millisecond)
+    checkPeersForStart(peerAddresses, myAddress)
 
     go hashgraphMain(myNode, peerAddresses)
-
-    // TODO: our application I/O logic
-
-    fmt.Printf("%s\n", peerAddressMap)
 
     for {
         continue
@@ -106,7 +99,6 @@ func hashgraphMain(node hashgraph.Node, peerAddresses []string) {
 
         fmt.Printf("%+x \n", numEventsToSend)
 
-        time.Sleep(5000 * time.Millisecond)
 
         // TODO: create a new event
         node.DivideRounds()
@@ -157,4 +149,36 @@ func listenForRPCConnections(listener *net.TCPListener) {
         }
         rpc.ServeConn(conn)
     }
+}
+
+func checkPeersForStart(peerAddresses []string, myAddress string) {
+    fmt.Println("Welcome to Decentralized Ledger, please wait until all other peers are available.")
+    peerAvailable := make([]bool, len(peerAddresses))
+
+    remainingPeers := len(peerAddresses)
+    for remainingPeers > 0 {
+        for index, isAlreadyResponded := range peerAvailable {
+            // we have already reached this peer
+            if isAlreadyResponded {
+                continue
+            }
+
+            // this peer is us :)
+            if peerAddresses[index] == myAddress {
+                peerAvailable[index] = true
+                remainingPeers--
+                continue
+            }
+
+            rpcConnection, err := rpc.Dial("tcp", peerAddresses[index])
+            if err != nil {
+                continue
+            } else {
+                _ = rpcConnection.Close()
+                peerAvailable[index] = true
+                remainingPeers--
+            }
+        }
+    }
+    fmt.Println("All peers are available, you can start sending messages")
 }
