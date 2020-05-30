@@ -5,6 +5,7 @@ import (
     "bufio"
     "fmt"
     "net"
+    "net/rpc"
     "os"
     "strings"
 )
@@ -35,14 +36,41 @@ func main() {
         panic("Peers file does not include my address: " + myAddress)
     }
 
-    fmt.Print(peerAddresses)
 
-    myNode := hashgraph.Node{
-        Address:   "",
-        Hashgraph: nil,
+    initialHashgraph := make(map[string][]hashgraph.Event, len(peerAddresses))
+    // TODO: create initial event
+    initialEvent := hashgraph.Event{
+        Signature:       "",
+        SelfParentHash:  "",
+        OtherParentHash: "",
+        Timestamp:       0,
+        Transactions:    nil,
     }
 
+    for addr := range peerAddresses {
+        initialHashgraph[addr] = make([]hashgraph.Event, 0)
+    }
+
+    initialHashgraph[myAddress] = append(initialHashgraph[myAddress], initialEvent)
+
+    myNode := hashgraph.Node{
+        Address:   myAddress,
+        Hashgraph: initialHashgraph,
+    }
+
+    _ = rpc.Register(&myNode)
+    tcpAddr, _ := net.ResolveTCPAddr("tcp", myAddress)
+    listener, _ := net.ListenTCP("tcp", tcpAddr)
+    go listenForRPCConnections(listener)
+
+    // TODO: wait until all nodes are online
+
     go hashgraphMain(myNode)
+
+    // TODO: our application I/O logic
+
+    fmt.Printf("%s\n", peerAddresses)
+
 }
 
 func hashgraphMain(node hashgraph.Node) {
@@ -87,5 +115,15 @@ func getLocalAddress() string {
 func handleError(e error) {
     if e != nil {
         panic(e)
+    }
+}
+
+func listenForRPCConnections(listener *net.TCPListener) {
+    for {
+        conn, err := listener.Accept()
+        if err != nil {
+            continue
+        }
+        rpc.ServeConn(conn)
     }
 }
