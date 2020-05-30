@@ -9,6 +9,7 @@ import (
     "net/rpc"
     "os"
     "strings"
+    "time"
 )
 
 const (
@@ -91,14 +92,19 @@ func hashgraphMain(node hashgraph.Node, peerAddresses []string) {
             knownEventNums[addr] = len(node.Hashgraph[addr])
         }
 
+        fmt.Print("Known Events: ")
+        fmt.Println(knownEventNums)
+
         peerRpcConnection, err := rpc.Dial("tcp", randomPeer)
         handleError(err)
         numEventsToSend := make(map[string]int, len(node.Hashgraph))
         _ = peerRpcConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend)
         _ = peerRpcConnection.Close()
 
-        fmt.Printf("%+x \n", numEventsToSend)
+        fmt.Print("Events to send: ")
+        fmt.Println(numEventsToSend)
 
+        time.Sleep(5 * time.Second)
 
         // TODO: create a new event
         node.DivideRounds()

@@ -11,7 +11,9 @@ type SyncEventsDTO struct {
 }
 
 func (n *Node) GetNumberOfMissingEvents(numEventsAlreadyKnown map[string]int, numEventsToSend *map[string]int) error {
-
+    for addr := range n.Hashgraph {
+        (*numEventsToSend)[addr] = len(n.Hashgraph[addr]) - numEventsAlreadyKnown[addr]
+    }
     return nil
 }
 
