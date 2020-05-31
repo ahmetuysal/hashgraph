@@ -7,7 +7,7 @@ import (
 
 //Node :
 type Node struct {
-    Address   string             // ip:port of the peer
+    Address   string              // ip:port of the peer
     Hashgraph map[string][]*Event // local copy of hashgraph, map to peer address -> peer events
     Events    map[string]*Event   // events as a map of signature -> event
 }
@@ -108,8 +108,48 @@ func (n Node) see(current Event, target Event) bool {
 }
 
 // If we see the target, and we go through 2n/3 different nodes as we do that, we say we strongly see that target. This function is used for choosing the famous witness
-func (n Node) stronglySee(current Event, target Event, seenEvents []Event) (bool, int) {
-    // todo
+func (n Node) stronglySee(current Event, target Event) bool {
+    latestAncestors := n.getLatestAncestorFromAllNodes(current, target.Round)
+    count := 0
+    for _, latestAncestor := range latestAncestors {
+        if n.see(*latestAncestor, target) {
+            count++
+        }
+    }
+
+    return count > int(math.Ceil(2.0*float64(len(n.Hashgraph))/3.0))
+}
+
+func (n Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[string]*Event {
+    latestAncestors := make(map[string]*Event, len(n.Hashgraph))
+
+    var queue []*Event
+    queue = append(queue, &e)
+
+    var currentEvent *Event
+    for len(queue) > 0 {
+        currentEvent = queue[0]
+        queue[0] = nil
+        queue = queue[1:]
+
+        currentAncestorFromOwner, ok := latestAncestors[currentEvent.Owner]
+
+        if !ok {
+            latestAncestors[currentEvent.Owner] = currentEvent
+        } else if currentAncestorFromOwner.Round >= currentEvent.Round && n.see(*currentEvent, *currentAncestorFromOwner) {
+            latestAncestors[currentEvent.Owner] = currentEvent
+        }
+
+        selfParent := n.Events[currentEvent.SelfParentHash]
+        if selfParent.Round >= minRound {
+            queue = append(queue, selfParent)
+        }
+        otherParent := n.Events[currentEvent.OtherParentHash]
+        if otherParent.Round >= minRound {
+            queue = append(queue, otherParent)
+        }
+    }
+    return latestAncestors
 }
 
 // Find witnesses of round r, which is the first event with round r in every node
