@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
 	"../../pkg/hashgraph"
 )
 
@@ -52,14 +51,18 @@ func main() {
 	initialHashgraph := make(map[string][]hashgraph.Event, len(peerAddressMap))
 	for addr := range peerAddressMap {
 		initialHashgraph[addr] = make([]hashgraph.Event, 0) // We should not know any event other than our own event at the start
-	}
+    }
 	initialEvent := hashgraph.Event{
-		Signature:       time.Now().String(), // todo: use RSA
+        Owner:           myAddress
+		Signature:       signature, // todo: use RSA
 		SelfParentHash:  "",                  // suggestion #2: if selfParentHash == otherParentHash then an event is initial?
 		OtherParentHash: "",
 		Timestamp:       0, // todo: use datetime, perhaps 0 does not matter here
-		Transactions:    nil,
-	}
+        Transactions:    nil,
+        Round: 1,           // this is defined in the paper to be 1 for initial events
+        IsWitness: true       // true because this is the first event in this round
+    }
+    hashgraph.Events[initialEvent.signature] = initialEvent
 	initialHashgraph[myAddress] = append(initialHashgraph[myAddress], initialEvent)
 	myNode := hashgraph.Node{
 		Address:   myAddress,
