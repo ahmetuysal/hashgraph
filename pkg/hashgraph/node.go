@@ -68,7 +68,7 @@ func (n Node) DivideRounds(e Event) {
 	// Count strongly seen witnesses for this round
 	stronglySeenWitnessCount := 0
 	for _, w := range witnesses {
-		if n.stronglySee(...) {
+		if n.stronglySee( /* ... */ ) {
 			stronglySeenWitnessCount++
 		}
 	}
@@ -77,7 +77,7 @@ func (n Node) DivideRounds(e Event) {
 	} else {
 		e.Round = r
 	}
-    e.IsWitness = e.Round > selfParent.Round // we do not check if there is no self parent, because we never create the initial event here
+	e.IsWitness = e.Round > selfParent.Round // we do not check if there is no self parent, because we never create the initial event here
 }
 
 //DecideFame : Decides if a witness is famous or not
@@ -93,13 +93,14 @@ func (n Node) FindOrder() {
 // If we can reach to target using downward edges only, we can see it. Downward in this case means that we reach through either parent. This function is used for voting
 // todo: if required we can optimize  with a global variable to indicate early exit if target is reached
 func (n Node) see(current Event, target Event) bool {
-	if current == target { // todo: should we just compare signatures here instead of whole object, for performance?
+	if current.Signature == target.Signature {
 		return true
 	}
-	_, okSelf := n.Events[current.SelfParentHash]
-	_, okOther := n.Events[current.OtherParentHash]
+	if current.Round == 1 && current.IsWitness {
+		return false
+	}
 	// Go has short-circuit evaluation, which we utilize here
-	return (okSelf && n.see(n.Events[current.SelfParentHash], target)) || (okOther && n.see(n.Events[current.OtherParentHash], target))
+	return n.see(n.Events[current.SelfParentHash], target) || n.see(n.Events[current.OtherParentHash], target)
 }
 
 // If we see the target, and we go through 2n/3 different nodes as we do that, we say we strongly see that target. This function is used for choosing the famous witness
