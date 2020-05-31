@@ -50,7 +50,7 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
     n.Hashgraph[n.Address] = append(n.Hashgraph[n.Address], &newEvent)
 
     // big boi todo's here :)
-    n.DivideRounds(&newEvent) // IMPORTANT TODO: PASS A POINTER HERE INSTEAD OF COPY?
+    n.DivideRounds(&newEvent)
     n.DecideFame()
     n.FindOrder()
 
@@ -68,7 +68,7 @@ func (n Node) DivideRounds(e *Event) {
     // Count strongly seen witnesses for this round
     stronglySeenWitnessCount := 0
     for _, w := range witnesses {
-        if n.stronglySee( /* ... */) {
+        if n.stronglySee(*e, *w) {
             stronglySeenWitnessCount++
         }
     }
@@ -136,7 +136,7 @@ func (n Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[string
 
         if !ok {
             latestAncestors[currentEvent.Owner] = currentEvent
-        } else if currentAncestorFromOwner.Round >= currentEvent.Round && n.see(*currentEvent, *currentAncestorFromOwner) {
+        } else if currentEvent.Round >= currentAncestorFromOwner.Round && n.see(*currentEvent, *currentAncestorFromOwner) {
             latestAncestors[currentEvent.Owner] = currentEvent
         }
 
