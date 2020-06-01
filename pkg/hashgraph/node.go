@@ -1,6 +1,7 @@
 package hashgraph
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -14,7 +15,15 @@ type Node struct {
 	Witnesses                     map[string]map[uint32]*Event // map of peer addres -> (map of round -> witness)
 	FirstRoundOfFameUndecided     map[string]uint32            // the round of first witness that's fame is undecided for each peer
 	FirstEventOfNotConsensusIndex map[string]int               // the index of first non-consensus event
-	ConsensusEvents               []*Event
+	ConsensusEvents               []*Event                     // list of events with roundReceived and consensusTimestamp
+	TransactionBuffer             []Transaction
+}
+
+//Transaction : ...
+type Transaction struct {
+	SenderAddress   string  // ip:port of sender
+	ReceiverAddress string  // ip:port of receiver
+	Amount          float64 // amount
 }
 
 //SyncEventsDTO : Data transfer object for 2nd call in Gossip: SyncAllEvents
@@ -40,13 +49,16 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 		}
 	}
 
+	// Flush the transactions
+	transactions := n.TransactionBuffer
+	n.TransactionBuffer = nil
 	newEvent := Event{
 		Owner:           n.Address,
 		Signature:       time.Now().String(), // todo: use RSA
 		SelfParentHash:  n.Hashgraph[n.Address][len(n.Hashgraph[n.Address])-1].Signature,
 		OtherParentHash: n.Hashgraph[events.SenderAddress][len(n.Hashgraph[events.SenderAddress])-1].Signature,
 		Timestamp:       time.Now(),
-		Transactions:    nil, // todo: use the transaction buffer which grows with user input
+		Transactions:    transactions, // todo: use the transaction buffer which grows with user input
 		Round:           0,
 		RoundReceived:   0,
 		IsWitness:       false,
@@ -81,6 +93,10 @@ func (n Node) DivideRounds(e *Event) {
 	}
 	if e.Round > selfParent.Round { // we do not check if there is no self parent, because we never create the initial event here
 		e.IsWitness = true
+		_, ok := n.Witnesses[e.Owner]
+		if !ok {
+			n.Witnesses[e.Owner] = make(map[uint32]*Event)
+		}
 		n.Witnesses[e.Owner][r] = e
 	}
 
@@ -167,12 +183,11 @@ func (n Node) FindOrder() {
 				}
 			}
 			if condMet {
-				e.RoundReceived = r
 				// Construct consensus set
 				var s []*Event
 				for _, w := range witnesses {
 					z := w
-					for !(z.Round == 1 && z.IsWitness) {
+					for !isInitial(*z) {
 						if z.Round < r {
 							// if z is lower than e, e can't be ancestor of z
 							break
@@ -183,15 +198,20 @@ func (n Node) FindOrder() {
 						z = n.Events[z.SelfParentHash]
 					}
 				}
-				// Take median
-				timestamps := make(timeSlice, len(s))
-				for i, se := range s {
-					timestamps[i] = se.Timestamp
+				if len(s) != 0 {
+					e.RoundReceived = r
+					// Take median
+					timestamps := make(timeSlice, len(s))
+					for i, se := range s {
+						timestamps[i] = se.Timestamp
+					}
+					fmt.Printf("Lenghts | timestamps: %d\t s: %d\t witnesses: %d\n", len(timestamps), len(s), len(witnesses))
+					sort.Stable(timestamps) // returns timestamps sorted in increasing order
+					medianTimestamp := timestamps[int(math.Floor(float64(len(timestamps))/2.0))]
+					e.ConsensusTimestamp = medianTimestamp
+
+					n.ConsensusEvents = append(n.ConsensusEvents, e)
 				}
-				sort.Stable(timestamps) // returns timestamps sorted in increasing order
-				medianTimestamp := timestamps[int(math.Floor(float64(len(timestamps))/2.0))]
-				e.ConsensusTimestamp = medianTimestamp
-				n.ConsensusEvents = append(n.ConsensusEvents, e)
 			}
 		}
 	}
@@ -207,26 +227,12 @@ func (n Node) see(current Event, target Event) bool {
 	if current.Signature == target.Signature {
 		return true
 	}
-	if (current.Round < target.Round) || (current.Round == 1 && current.IsWitness) {
+	if (current.Round < target.Round) || isInitial(current) {
 		return false
 	}
 
 	// Go has short-circuit evaluation, which we utilize here
 	return n.see(*n.Events[current.SelfParentHash], target) || n.see(*n.Events[current.OtherParentHash], target)
-}
-
-func (n Node) selfAncestor(source Event, target Event) bool {
-	current := source
-	for {
-		if current.Signature == target.Signature {
-			return true
-		}
-		if (current.Round < target.Round) || (current.Round == 1 && current.IsWitness) {
-			return false
-		}
-
-		current = *n.Events[current.SelfParentHash]
-	}
 }
 
 // If we see the target, and we go through 2n/3 different nodes as we do that, we say we strongly see that target. This function is used for choosing the famous witness
@@ -242,33 +248,38 @@ func (n Node) stronglySee(current Event, target Event) bool {
 	return count > int(math.Ceil(2.0*float64(len(n.Hashgraph))/3.0))
 }
 
+// todo: comment
 func (n Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[string]*Event {
 	latestAncestors := make(map[string]*Event, len(n.Hashgraph))
+	if !isInitial(e) {
+		var queue []*Event
+		queue = append(queue, &e)
 
-	var queue []*Event
-	queue = append(queue, &e)
+		var currentEvent *Event
+		for len(queue) > 0 {
+			currentEvent = queue[0]
+			queue[0] = nil
+			queue = queue[1:]
 
-	var currentEvent *Event
-	for len(queue) > 0 {
-		currentEvent = queue[0]
-		queue[0] = nil
-		queue = queue[1:]
+			currentAncestorFromOwner, ok := latestAncestors[currentEvent.Owner]
 
-		currentAncestorFromOwner, ok := latestAncestors[currentEvent.Owner]
+			if !ok {
+				latestAncestors[currentEvent.Owner] = currentEvent
+			} else if currentEvent.Round >= currentAncestorFromOwner.Round && n.see(*currentEvent, *currentAncestorFromOwner) {
+				latestAncestors[currentEvent.Owner] = currentEvent
+			}
 
-		if !ok {
-			latestAncestors[currentEvent.Owner] = currentEvent
-		} else if currentEvent.Round >= currentAncestorFromOwner.Round && n.see(*currentEvent, *currentAncestorFromOwner) {
-			latestAncestors[currentEvent.Owner] = currentEvent
-		}
+			if !isInitial(*currentEvent) {
+				selfParent := n.Events[currentEvent.SelfParentHash]
+				if selfParent.Round >= minRound {
+					queue = append(queue, selfParent)
+				}
+				otherParent := n.Events[currentEvent.OtherParentHash]
+				if otherParent.Round >= minRound {
+					queue = append(queue, otherParent)
+				}
+			}
 
-		selfParent := n.Events[currentEvent.SelfParentHash]
-		if selfParent.Round >= minRound {
-			queue = append(queue, selfParent)
-		}
-		otherParent := n.Events[currentEvent.OtherParentHash]
-		if otherParent.Round >= minRound {
-			queue = append(queue, otherParent)
 		}
 	}
 	return latestAncestors
@@ -294,17 +305,19 @@ func max(a, b uint32) uint32 {
 	return b
 }
 
+func isInitial(e Event) bool {
+	return e.Round == 1 && e.IsWitness
+}
+
 /** timeSlice interface for sorting **/
 type timeSlice []time.Time
 
 func (p timeSlice) Len() int {
 	return len(p)
 }
-
 func (p timeSlice) Less(i, j int) bool {
 	return p[i].Before(p[j])
 }
-
 func (p timeSlice) Swap(i, j int) {
 	p[i], p[j] = p[j], p[i]
 }
@@ -315,7 +328,6 @@ type eventPtrSlice []*Event
 func (p eventPtrSlice) Len() int {
 	return len(p)
 }
-
 func (p eventPtrSlice) Less(i, j int) bool {
 	if p[i].RoundReceived == p[j].RoundReceived {
 		// round recieved may be same, break ties with timestamp
@@ -327,7 +339,6 @@ func (p eventPtrSlice) Less(i, j int) bool {
 	}
 	return p[i].RoundReceived < p[j].RoundReceived
 }
-
 func (p eventPtrSlice) Swap(i, j int) {
 	p[i], p[j] = p[j], p[i]
 }

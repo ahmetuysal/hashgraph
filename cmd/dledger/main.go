@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/rpc"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,21 +15,14 @@ import (
 )
 
 const (
-	//DefaultPort : Use this default port if it isn't specified via command line arguments.
-	DefaultPort = "8080"
-	//VERBOSE : set true for debug printing
-	VERBOSE = true
+	verbose                    = true                    // Set true for debug printing
+	defaultPort                = "8080"                  // Use this default port if it isn't specified via command line arguments.
+	gossipWaitTime             = 1000 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
+	connectionAttemptDelayTime = 100 * time.Millisecond  // the amount of time.sleep milliseconds between each connection attempt
 )
 
-//Transaction : ...
-type Transaction struct {
-	senderAddress   string  // ip:port of sender
-	receiverAddress string  // ip:port of receiver
-	amount          float64 // amount
-}
-
 func main() {
-	port := DefaultPort
+	port := defaultPort
 	if len(os.Args) > 1 {
 		port = os.Args[1]
 	}
@@ -44,11 +38,14 @@ func main() {
 	}
 
 	// Copy peer addresses to a slice for random access during gossip
-	peerAddresses := make([]string, len(peerAddressMap))
+	peerAddresses := make([]string, len(peerAddressMap)-1)
 	i := 0
 	for k := range peerAddressMap {
-		peerAddresses[i] = k // suggestion #1: do not add my own ip:port here, instead of creating another slice without me later
-		i++
+		if k != myAddress {
+			peerAddresses[i] = k // suggestion #1: do not add my own ip:port here, instead of creating another slice without me later
+			i++
+		}
+
 	}
 
 	// Setup the Hashgraph
@@ -61,7 +58,7 @@ func main() {
 		Signature:       time.Now().String(), // todo: use RSA
 		SelfParentHash:  "",
 		OtherParentHash: "",
-		Timestamp:       time.Now(), // todo: use datetime, perhaps 0 does not matter here
+		Timestamp:       time.Now(),
 		Transactions:    nil,
 		Round:           1,
 		IsWitness:       true, // true because the initial event is the first event of its round
@@ -69,14 +66,19 @@ func main() {
 	}
 	initialHashgraph[myAddress] = append(initialHashgraph[myAddress], &initialEvent)
 	myNode := hashgraph.Node{
-		Address:   myAddress,
-		Hashgraph: initialHashgraph,
-		Events:    make(map[string]*hashgraph.Event),
+		Address:                       myAddress,
+		Hashgraph:                     initialHashgraph,
+		Events:                        make(map[string]*hashgraph.Event),
+		Witnesses:                     make(map[string]map[uint32]*hashgraph.Event),
+		FirstRoundOfFameUndecided:     make(map[string]uint32),
+		FirstEventOfNotConsensusIndex: make(map[string]int),
 	}
+	myNode.Witnesses[initialEvent.Owner] = make(map[uint32]*hashgraph.Event)
 	myNode.Witnesses[initialEvent.Owner][1] = &initialEvent
 	myNode.Events[initialEvent.Signature] = &initialEvent
 	myNode.FirstRoundOfFameUndecided[initialEvent.Owner] = 1
 	myNode.FirstEventOfNotConsensusIndex[initialEvent.Owner] = 0 // index 0 for the initial event
+
 	// Setup the server
 	_ = rpc.Register(&myNode)
 	tcpAddr, _ := net.ResolveTCPAddr("tcp", myAddress)
@@ -84,38 +86,66 @@ func main() {
 	go listenForRPCConnections(listener)
 
 	// Assert that everyone is online
-	checkPeersForStart(peerAddresses, myAddress)
+	checkPeersForStart(peerAddresses)
+	fmt.Printf("I am online at %s and all peers are available.\n", myAddress)
 
-	go hashgraphMain(myNode, peerAddresses)
+	go gossipRoutine(myNode, peerAddresses)
 
-	// todo: user interface for transactions
+	// Routine for user transaction inputs
+	var input int
+	var amount float64
+	scanner := bufio.NewScanner(os.Stdin)
+	fmt.Println()
 	for {
-		continue
+		// note: peerAddressMap contains me, but peerAddresses does not
+		fmt.Printf("\nDear %s, please choose a client for your new transaction.\n", peerAddressMap[myAddress])
+		for i, addr := range peerAddresses {
+			fmt.Printf("\t%d) %s\n", i+1, peerAddressMap[addr])
+		}
+
+		fmt.Printf("Enter a number: > ")
+		errForInput := true
+		for errForInput {
+			var err error
+			errForInput = false
+			scanner.Scan()
+			input, err = strconv.Atoi(scanner.Text())
+			if err != nil || input <= 0 || input > len(peerAddresses) {
+				errForInput = true
+				fmt.Printf("\nBad input, try again: > ")
+			}
+		}
+		chosenAddr := peerAddresses[input-1]
+
+		fmt.Printf("\nDear %s, please enter how much credits would you like transfer to %s:\n\t> ", peerAddressMap[myAddress], peerAddressMap[chosenAddr])
+		errForInput = true
+		for errForInput {
+			var err error
+			errForInput = false
+			scanner.Scan()
+			amount, err = strconv.ParseFloat(scanner.Text(), 64)
+			if err != nil || amount <= 0 {
+				errForInput = true
+				fmt.Printf("Bad input, try again: > ")
+			}
+		}
+
+		myNode.TransactionBuffer = append(myNode.TransactionBuffer, hashgraph.Transaction{SenderAddress: myAddress, ReceiverAddress: chosenAddr, Amount: amount})
+		fmt.Printf("\nSuccessfully added transaction:\n\t'%s sends %f to %s'\n", peerAddressMap[myAddress], amount, peerAddressMap[chosenAddr])
 	}
 
 }
 
-func hashgraphMain(node hashgraph.Node, peerAddresses []string) {
-	// see suggestion #1
-	otherPeers := make([]string, len(peerAddresses)-1)
-	i := 0
-	for _, addr := range peerAddresses {
-		if addr != node.Address {
-			otherPeers[i] = addr
-			i++
-		}
-	}
-
-	// Gossip Loop
+func gossipRoutine(node hashgraph.Node, peerAddresses []string) {
 	for {
-		randomPeer := otherPeers[rand.Intn(len(otherPeers))]
+		randomPeer := peerAddresses[rand.Intn(len(peerAddresses))]
 
 		knownEventNums := make(map[string]int, len(node.Hashgraph))
 		for addr := range node.Hashgraph {
 			knownEventNums[addr] = len(node.Hashgraph[addr])
 		}
 
-		if VERBOSE {
+		if verbose {
 			fmt.Print("Known Events: ")
 			fmt.Println(knownEventNums)
 		}
@@ -125,7 +155,7 @@ func hashgraphMain(node hashgraph.Node, peerAddresses []string) {
 		numEventsToSend := make(map[string]int, len(node.Hashgraph))
 		_ = peerRPCConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend)
 
-		if VERBOSE {
+		if verbose {
 			fmt.Print("Events to send: ")
 			fmt.Println(numEventsToSend)
 		}
@@ -146,10 +176,16 @@ func hashgraphMain(node hashgraph.Node, peerAddresses []string) {
 			MissingEvents: missingEvents,
 		}
 
+		if verbose {
+			fmt.Println("moving on 1")
+		}
 		_ = peerRPCConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil)
 		_ = peerRPCConnection.Close()
 
-		time.Sleep(5 * time.Second)
+		if verbose {
+			fmt.Println("moving on 2")
+		}
+		time.Sleep(gossipWaitTime)
 
 	}
 }
@@ -198,7 +234,7 @@ func listenForRPCConnections(listener *net.TCPListener) {
 	}
 }
 
-func checkPeersForStart(peerAddresses []string, myAddress string) {
+func checkPeersForStart(peerAddresses []string) {
 	fmt.Println("Welcome to Decentralized Ledger, please wait until all other peers are available.")
 	peerAvailable := make([]bool, len(peerAddresses))
 	remainingPeers := len(peerAddresses)
@@ -209,15 +245,9 @@ func checkPeersForStart(peerAddresses []string, myAddress string) {
 				continue
 			}
 
-			// this peer is us :)
-			if peerAddresses[index] == myAddress {
-				peerAvailable[index] = true
-				remainingPeers--
-				continue
-			}
-
 			rpcConnection, err := rpc.Dial("tcp", peerAddresses[index])
 			if err != nil {
+				time.Sleep(connectionAttemptDelayTime)
 				continue
 			} else {
 				_ = rpcConnection.Close()
@@ -226,6 +256,5 @@ func checkPeersForStart(peerAddresses []string, myAddress string) {
 			}
 		}
 	}
-	fmt.Println("All peers are available, you can start sending messages")
 
 }
