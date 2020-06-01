@@ -2,16 +2,19 @@ package hashgraph
 
 import (
 	"math"
+	"sort"
 	"time"
 )
 
 //Node :
 type Node struct {
-	Address                   string                       // ip:port of the peer
-	Hashgraph                 map[string][]*Event          // local copy of hashgraph, map to peer address -> peer events
-	Events                    map[string]*Event            // events as a map of signature -> event
-	Witnesses                 map[string]map[uint32]*Event // map of peer addres -> (map of round -> witness)
-	FirstRoundOfFameUndecided map[string]uint32            // the index of first witness that's fame is undecided for each peer
+	Address                       string                       // ip:port of the peer
+	Hashgraph                     map[string][]*Event          // local copy of hashgraph, map to peer address -> peer events
+	Events                        map[string]*Event            // events as a map of signature -> event
+	Witnesses                     map[string]map[uint32]*Event // map of peer addres -> (map of round -> witness)
+	FirstRoundOfFameUndecided     map[string]uint32            // the round of first witness that's fame is undecided for each peer
+	FirstEventOfNotConsensusIndex map[string]int               // the index of first non-consensus event
+	ConsensusEvents               []*Event
 }
 
 //SyncEventsDTO : Data transfer object for 2nd call in Gossip: SyncAllEvents
@@ -37,15 +40,15 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 		}
 	}
 
-	// TODO: create new event
 	newEvent := Event{
 		Owner:           n.Address,
 		Signature:       time.Now().String(), // todo: use RSA
 		SelfParentHash:  n.Hashgraph[n.Address][len(n.Hashgraph[n.Address])-1].Signature,
 		OtherParentHash: n.Hashgraph[events.SenderAddress][len(n.Hashgraph[events.SenderAddress])-1].Signature,
-		Timestamp:       0,   // todo: use date time
+		Timestamp:       time.Now(),
 		Transactions:    nil, // todo: use the transaction buffer which grows with user input
 		Round:           0,
+		RoundReceived:   0,
 		IsWitness:       false,
 		IsFamous:        false,
 	}
@@ -53,8 +56,8 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 	n.Hashgraph[n.Address] = append(n.Hashgraph[n.Address], &newEvent)
 
 	n.DivideRounds(&newEvent)
-	n.DecideFame() // todo
-	n.FindOrder()  // todo
+	n.DecideFame()
+	n.FindOrder()
 
 	return nil
 }
@@ -64,9 +67,7 @@ func (n Node) DivideRounds(e *Event) {
 	selfParent := n.Events[e.SelfParentHash]
 	otherParent := n.Events[e.OtherParentHash]
 	r := max(selfParent.Round, otherParent.Round)
-	// Find round r witnesses
 	witnesses := n.findWitnessesOfARound(r)
-	// Count strongly seen witnesses for this round
 	stronglySeenWitnessCount := 0
 	for _, w := range witnesses {
 		if n.stronglySee(*e, *w) {
@@ -143,24 +144,89 @@ func (n Node) DecideFame() {
 
 //FindOrder : Arrive at a consensus on the order of events
 func (n Node) FindOrder() {
-
+	var nonConsensusEvents []*Event
+	for addr := range n.Hashgraph {
+		nonConsensusEvents = append(nonConsensusEvents, n.Hashgraph[addr][n.FirstEventOfNotConsensusIndex[addr]:]...)
+	}
+	for _, e := range nonConsensusEvents {
+		// First & Third conditions: find a valid round number
+		r := n.FirstRoundOfFameUndecided[e.Owner] // owner is arbitrary
+		for _, round := range n.FirstRoundOfFameUndecided {
+			if round < r {
+				r = round
+			}
+		}
+		witnesses := n.findWitnessesOfARound(r)
+		if len(witnesses) != 0 {
+			// Second condition: make sure x is seen by all famous witnesses
+			condMet := true
+			for _, w := range witnesses {
+				if w.IsFamous && !n.see(*w, *e) {
+					condMet = false
+					break
+				}
+			}
+			if condMet {
+				e.RoundReceived = r
+				// Construct consensus set
+				var s []*Event
+				for _, w := range witnesses {
+					z := w
+					for !(z.Round == 1 && z.IsWitness) {
+						if z.Round < r {
+							// if z is lower than e, e can't be ancestor of z
+							break
+						}
+						if n.see(*z, *e) && !n.see(*n.Events[z.SelfParentHash], *e) {
+							s = append(s, z)
+						}
+						z = n.Events[z.SelfParentHash]
+					}
+				}
+				// Take median
+				timestamps := make(timeSlice, len(s))
+				for i, se := range s {
+					timestamps[i] = se.Timestamp
+				}
+				sort.Stable(timestamps) // returns timestamps sorted in increasing order
+				medianTimestamp := timestamps[int(math.Floor(float64(len(timestamps))/2.0))]
+				e.ConsensusTimestamp = medianTimestamp
+				n.ConsensusEvents = append(n.ConsensusEvents, e)
+			}
+		}
+	}
+	// Bring all consensus events ordered
+	consensusSlice := make(eventPtrSlice, len(n.ConsensusEvents))
+	consensusSlice = n.ConsensusEvents
+	sort.Stable(consensusSlice)
+	n.ConsensusEvents = consensusSlice
 }
 
 // If we can reach to target using downward edges only, we can see it. Downward in this case means that we reach through either parent. This function is used for voting
-// todo: if required we can optimize  with a global variable to indicate early exit if target is reached
 func (n Node) see(current Event, target Event) bool {
 	if current.Signature == target.Signature {
 		return true
 	}
-	if current.Round == 1 && current.IsWitness {
-		return false
-	}
-	if current.Round < target.Round {
+	if (current.Round < target.Round) || (current.Round == 1 && current.IsWitness) {
 		return false
 	}
 
 	// Go has short-circuit evaluation, which we utilize here
 	return n.see(*n.Events[current.SelfParentHash], target) || n.see(*n.Events[current.OtherParentHash], target)
+}
+
+func (n Node) selfAncestor(source Event, target Event) bool {
+	current := source
+	for {
+		if current.Signature == target.Signature {
+			return true
+		}
+		if (current.Round < target.Round) || (current.Round == 1 && current.IsWitness) {
+			return false
+		}
+
+		current = *n.Events[current.SelfParentHash]
+	}
 }
 
 // If we see the target, and we go through 2n/3 different nodes as we do that, we say we strongly see that target. This function is used for choosing the famous witness
@@ -216,7 +282,6 @@ func (n Node) findWitnessesOfARound(r uint32) map[string]*Event {
 		if ok {
 			witnesses[addr] = w
 		}
-		break
 	}
 	return witnesses // it is possible that a round does not have a witness on each node sometimes
 }
@@ -227,4 +292,42 @@ func max(a, b uint32) uint32 {
 		return a
 	}
 	return b
+}
+
+/** timeSlice interface for sorting **/
+type timeSlice []time.Time
+
+func (p timeSlice) Len() int {
+	return len(p)
+}
+
+func (p timeSlice) Less(i, j int) bool {
+	return p[i].Before(p[j])
+}
+
+func (p timeSlice) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
+}
+
+/** eventSlice interface for sorting **/
+type eventPtrSlice []*Event
+
+func (p eventPtrSlice) Len() int {
+	return len(p)
+}
+
+func (p eventPtrSlice) Less(i, j int) bool {
+	if p[i].RoundReceived == p[j].RoundReceived {
+		// round recieved may be same, break ties with timestamp
+		if p[i].ConsensusTimestamp == p[j].ConsensusTimestamp {
+			// timestamp may be same (though very unlikely), break by signature
+			return true // TODO: use bits of RSA signature
+		}
+		return p[i].ConsensusTimestamp.Before(p[j].ConsensusTimestamp)
+	}
+	return p[i].RoundReceived < p[j].RoundReceived
+}
+
+func (p eventPtrSlice) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
 }
