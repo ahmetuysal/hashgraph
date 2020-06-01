@@ -14,8 +14,10 @@ import (
 )
 
 const (
-	DefaultPort = "8080" // Use this default port if it isn't specified via command line arguments
-	VERBOSE     = true   // For debugging, we can set it to false or remove these alltogether after we are done
+	//DefaultPort : Use this default port if it isn't specified via command line arguments.
+	DefaultPort = "8080"
+	//VERBOSE : set true for debug printing
+	VERBOSE = true
 )
 
 //Transaction : ...
@@ -57,12 +59,12 @@ func main() {
 	initialEvent := hashgraph.Event{
 		Owner:           myAddress,
 		Signature:       time.Now().String(), // todo: use RSA
-		SelfParentHash:  "",                  // suggestion #2: if selfParentHash == otherParentHash then an event is initial?
+		SelfParentHash:  "",
 		OtherParentHash: "",
-		Timestamp:       0, // todo: use datetime, perhaps 0 does not matter here
+		Timestamp:       time.Now(), // todo: use datetime, perhaps 0 does not matter here
 		Transactions:    nil,
-		Round:           1,    // this is defined in the paper to be 1 for initial events
-		IsWitness:       true, // true because this is the first event in this round
+		Round:           1,
+		IsWitness:       true, // true because the initial event is the first event of its round
 		IsFamous:        false,
 	}
 	initialHashgraph[myAddress] = append(initialHashgraph[myAddress], &initialEvent)
@@ -74,6 +76,7 @@ func main() {
 	myNode.Witnesses[initialEvent.Owner][1] = &initialEvent
 	myNode.Events[initialEvent.Signature] = &initialEvent
 	myNode.FirstRoundOfFameUndecided[initialEvent.Owner] = 1
+	myNode.FirstEventOfNotConsensusIndex[initialEvent.Owner] = 0 // index 0 for the initial event
 	// Setup the server
 	_ = rpc.Register(&myNode)
 	tcpAddr, _ := net.ResolveTCPAddr("tcp", myAddress)
@@ -198,7 +201,6 @@ func listenForRPCConnections(listener *net.TCPListener) {
 func checkPeersForStart(peerAddresses []string, myAddress string) {
 	fmt.Println("Welcome to Decentralized Ledger, please wait until all other peers are available.")
 	peerAvailable := make([]bool, len(peerAddresses))
-
 	remainingPeers := len(peerAddresses)
 	for remainingPeers > 0 {
 		for index, isAlreadyResponded := range peerAvailable {
