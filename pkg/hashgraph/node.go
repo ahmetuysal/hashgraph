@@ -7,10 +7,11 @@ import (
 
 //Node :
 type Node struct {
-	Address   string              // ip:port of the peer
-	Hashgraph map[string][]*Event // local copy of hashgraph, map to peer address -> peer events
-	Events    map[string]*Event   // events as a map of signature -> event
-	Witnesses map[string][]*Event // witnesses of each peer
+	Address                   string                       // ip:port of the peer
+	Hashgraph                 map[string][]*Event          // local copy of hashgraph, map to peer address -> peer events
+	Events                    map[string]*Event            // events as a map of signature -> event
+	Witnesses                 map[string]map[uint32]*Event // map of peer addres -> (map of round -> witness)
+	FirstRoundOfFameUndecided map[string]uint32            // the index of first witness that's fame is undecided for each peer
 }
 
 //SyncEventsDTO : Data transfer object for 2nd call in Gossip: SyncAllEvents
@@ -59,27 +60,27 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 }
 
 //DivideRounds : Calculates the round of a new event
-func (n Node) DivideRounds(x *Event) {
-	selfParent := n.Events[x.SelfParentHash]
-	otherParent := n.Events[x.OtherParentHash]
+func (n Node) DivideRounds(e *Event) {
+	selfParent := n.Events[e.SelfParentHash]
+	otherParent := n.Events[e.OtherParentHash]
 	r := max(selfParent.Round, otherParent.Round)
 	// Find round r witnesses
 	witnesses := n.findWitnessesOfARound(r)
 	// Count strongly seen witnesses for this round
 	stronglySeenWitnessCount := 0
 	for _, w := range witnesses {
-		if n.stronglySee(*x, *w) {
+		if n.stronglySee(*e, *w) {
 			stronglySeenWitnessCount++
 		}
 	}
 	if stronglySeenWitnessCount > int(math.Ceil(2.0*float64(len(n.Hashgraph))/3.0)) {
-		x.Round = r + 1
+		e.Round = r + 1
 	} else {
-		x.Round = r
+		e.Round = r
 	}
-	if x.Round > selfParent.Round { // we do not check if there is no self parent, because we never create the initial event here
-		x.IsWitness = true
-		n.Witnesses[x.Owner] = append(n.Witnesses[x.Owner], x)
+	if e.Round > selfParent.Round { // we do not check if there is no self parent, because we never create the initial event here
+		e.IsWitness = true
+		n.Witnesses[e.Owner][r] = e
 	}
 
 }
@@ -87,8 +88,57 @@ func (n Node) DivideRounds(x *Event) {
 //DecideFame : Decides if a witness is famous or not
 // note: we did not implement a coin round yet
 func (n Node) DecideFame() {
-	//supermajorityNum := int(math.Ceil(2.0 * float64(len(n.Hashgraph)) / 3.0))
-
+	var fameUndecidedWitnesses []*Event // this is "for each x" in the paper
+	for addr := range n.Hashgraph {
+		for round, witness := range n.Witnesses[addr] { // todo: optimize the access
+			if round >= n.FirstRoundOfFameUndecided[addr] {
+				fameUndecidedWitnesses = append(fameUndecidedWitnesses, witness)
+			}
+		}
+	}
+	for _, e := range fameUndecidedWitnesses {
+		var witnessesWithGreaterRounds []*Event
+		for addr := range n.Hashgraph {
+			for round, witness := range n.Witnesses[addr] { // todo: optimize the access
+				if round > e.Round {
+					witnessesWithGreaterRounds = append(witnessesWithGreaterRounds, witness)
+				}
+			}
+		}
+		// Decision starts now
+		for _, w := range witnessesWithGreaterRounds {
+			witnessesOfRound := n.findWitnessesOfARound(w.Round - 1)
+			var stronglySeenWitnessesOfRound []*Event
+			for _, wr := range witnessesOfRound {
+				if n.stronglySee(*w, *wr) {
+					stronglySeenWitnessesOfRound = append(stronglySeenWitnessesOfRound, wr)
+				}
+			}
+			// Find majority vote
+			votes := make([]bool, len(stronglySeenWitnessesOfRound))
+			majority := 0
+			trueVotes := 0
+			falseVotes := 0
+			for i, voter := range stronglySeenWitnessesOfRound {
+				if n.see(*voter, *e) {
+					votes[i] = true
+					majority++
+					trueVotes++
+				} else {
+					votes[i] = false
+					majority--
+					falseVotes++
+				}
+			}
+			majorityVote := majority >= 0
+			superMajorityThreshold := int(math.Ceil(2.0 * float64(len(n.Hashgraph)) / 3.0))
+			if (majorityVote && trueVotes > superMajorityThreshold) || (!majorityVote && falseVotes > superMajorityThreshold) {
+				e.IsFamous = majorityVote
+				n.FirstRoundOfFameUndecided[e.Owner] = e.Round + 1
+				break
+			}
+		}
+	}
 }
 
 //FindOrder : Arrive at a consensus on the order of events
@@ -162,8 +212,9 @@ func (n Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[string
 func (n Node) findWitnessesOfARound(r uint32) map[string]*Event {
 	witnesses := make(map[string]*Event, len(n.Hashgraph))
 	for addr := range n.Hashgraph {
-		if uint32(len(n.Witnesses[addr])) >= r {
-			witnesses[addr] = n.Witnesses[addr][r-1]
+		w, ok := n.Witnesses[addr][r]
+		if ok {
+			witnesses[addr] = w
 		}
 		break
 	}
