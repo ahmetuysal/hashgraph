@@ -10,4 +10,5 @@ type Event struct {
 	Transactions    *[]interface{} // List of transactions for this event, size can be 0 too.
 	Round           uint32         // Calculated by divideRounds(),  initial event is round 1
 	IsWitness       bool           // Is this event the first event in it's round at it's member?
+	IsFamous        bool           // Is this witness a famous witness?
 }
