@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -15,6 +16,7 @@ const (
 
 //Node :
 type Node struct {
+	sync.RWMutex
 	Address                       string                       // ip:port of the peer
 	Hashgraph                     map[string][]*Event          // local copy of hashgraph, map to peer address -> peer events
 	Events                        map[string]*Event            // events as a map of signature -> event
@@ -40,14 +42,17 @@ type SyncEventsDTO struct {
 
 //GetNumberOfMissingEvents : Node A calls Node B to learn which events B does not know and A knows.
 func (n *Node) GetNumberOfMissingEvents(numEventsAlreadyKnown map[string]int, numEventsToSend *map[string]int) error {
+	n.RWMutex.RLock()
 	for addr := range n.Hashgraph {
 		(*numEventsToSend)[addr] = numEventsAlreadyKnown[addr] - len(n.Hashgraph[addr])
 	}
+	n.RWMutex.RUnlock()
 	return nil
 }
 
 //SyncAllEvents : Node A first calls GetNumberOfMissingEvents on B, and then sends the missing events in this function
 func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
+	n.RWMutex.Lock()
 	for addr := range events.MissingEvents {
 		for _, missingEvent := range events.MissingEvents[addr] {
 			n.Hashgraph[addr] = append(n.Hashgraph[addr], &missingEvent)
@@ -78,6 +83,9 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 	n.Events[newEvent.Signature] = &newEvent
 	n.Hashgraph[n.Address] = append(n.Hashgraph[n.Address], &newEvent)
 
+	n.RWMutex.Unlock()
+
+
 	if verbose {
 		fmt.Println("moving on 3")
 	}
@@ -99,8 +107,10 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 
 //DivideRounds : Calculates the round of a new event
 func (n *Node) DivideRounds(e *Event) {
+	n.RWMutex.RLock()
 	selfParent := n.Events[e.SelfParentHash]
 	otherParent := n.Events[e.OtherParentHash]
+	n.RWMutex.RUnlock()
 	r := max(selfParent.Round, otherParent.Round)
 	if verbose {
 		fmt.Println("movin on 7")
@@ -125,19 +135,21 @@ func (n *Node) DivideRounds(e *Event) {
 	}
 	if e.Round > selfParent.Round { // we do not check if there is no self parent, because we never create the initial event here
 		e.IsWitness = true
+		n.RWMutex.Lock()
 		_, ok := n.Witnesses[e.Owner]
 		if !ok {
 			n.Witnesses[e.Owner] = make(map[uint32]*Event)
 		}
 		n.Witnesses[e.Owner][r] = e
+		n.RWMutex.Unlock()
 	}
-
 }
 
 //DecideFame : Decides if a witness is famous or not
 // note: we did not implement a coin round yet
 func (n *Node) DecideFame() {
 	var fameUndecidedWitnesses []*Event // this is "for each x" in the paper
+	n.RWMutex.RLock()
 	for addr := range n.Hashgraph {
 		for round, witness := range n.Witnesses[addr] { // todo: optimize the access
 			if round >= n.FirstRoundOfFameUndecided[addr] {
@@ -145,8 +157,10 @@ func (n *Node) DecideFame() {
 			}
 		}
 	}
+	n.RWMutex.RUnlock()
 	for _, e := range fameUndecidedWitnesses {
 		var witnessesWithGreaterRounds []*Event
+		n.RWMutex.Lock()
 		for addr := range n.Hashgraph {
 			for round, witness := range n.Witnesses[addr] { // todo: optimize the access
 				if round > e.Round {
@@ -154,6 +168,7 @@ func (n *Node) DecideFame() {
 				}
 			}
 		}
+		n.RWMutex.Unlock()
 		// Decision starts now
 		for _, w := range witnessesWithGreaterRounds {
 			witnessesOfRound := n.findWitnessesOfARound(w.Round - 1)
@@ -183,7 +198,9 @@ func (n *Node) DecideFame() {
 			superMajorityThreshold := int(math.Ceil(2.0 * float64(len(n.Hashgraph)) / 3.0))
 			if (majorityVote && trueVotes > superMajorityThreshold) || (!majorityVote && falseVotes > superMajorityThreshold) {
 				e.IsFamous = majorityVote
+				n.RWMutex.Lock()
 				n.FirstRoundOfFameUndecided[e.Owner] = e.Round + 1
+				n.RWMutex.Unlock()
 				break
 			}
 		}
@@ -193,17 +210,21 @@ func (n *Node) DecideFame() {
 //FindOrder : Arrive at a consensus on the order of events
 func (n *Node) FindOrder() {
 	var nonConsensusEvents []*Event
+	n.RWMutex.RLock()
 	for addr := range n.Hashgraph {
 		nonConsensusEvents = append(nonConsensusEvents, n.Hashgraph[addr][n.FirstEventOfNotConsensusIndex[addr]:]...)
 	}
+	n.RWMutex.RUnlock()
 	for _, e := range nonConsensusEvents {
 		// First & Third conditions: find a valid round number
+		n.RWMutex.RLock()
 		r := n.FirstRoundOfFameUndecided[e.Owner] // owner is arbitrary
 		for _, round := range n.FirstRoundOfFameUndecided {
 			if round < r {
 				r = round
 			}
 		}
+		n.RWMutex.RUnlock()
 		witnesses := n.findWitnessesOfARound(r)
 		if len(witnesses) != 0 {
 			// Second condition: make sure x is seen by all famous witnesses
@@ -241,8 +262,9 @@ func (n *Node) FindOrder() {
 					sort.Stable(timestamps) // returns timestamps sorted in increasing order
 					medianTimestamp := timestamps[int(math.Floor(float64(len(timestamps))/2.0))]
 					e.ConsensusTimestamp = medianTimestamp
-
+					n.RWMutex.Lock()
 					n.ConsensusEvents = append(n.ConsensusEvents, e)
+					n.RWMutex.Unlock()
 				}
 			}
 		}
@@ -251,7 +273,9 @@ func (n *Node) FindOrder() {
 	consensusSlice := make(eventPtrSlice, len(n.ConsensusEvents))
 	consensusSlice = n.ConsensusEvents
 	sort.Stable(consensusSlice)
+	n.RWMutex.Lock()
 	n.ConsensusEvents = consensusSlice
+	n.RWMutex.Unlock()
 }
 
 // If we can reach to target using downward edges only, we can see it. Downward in this case means that we reach through either parent. This function is used for voting
@@ -277,7 +301,7 @@ func (n *Node) stronglySee(current Event, target Event) bool {
 	}
 	count := 0
 	for _, latestAncestor := range latestAncestors {
-		if n.see(*latestAncestor, target) {
+		if n.see(latestAncestor, target) {
 			count++
 		}
 	}
@@ -286,36 +310,39 @@ func (n *Node) stronglySee(current Event, target Event) bool {
 }
 
 // todo: comment
-func (n *Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[string]*Event {
-	latestAncestors := make(map[string]*Event, len(n.Hashgraph))
+func (n *Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[string]Event {
+	latestAncestors := make(map[string]Event, len(n.Hashgraph))
 	if !isInitial(e) {
-		var queue []*Event
-		queue = append(queue, &e)
+		var queue []Event
+		queue = append(queue, e)
 
-		var currentEvent *Event
+		var currentEvent Event
 		for len(queue) > 0 {
 			currentEvent = queue[0]
-			queue[0] = nil
+			if verbose {
+				fmt.Printf("LEN: %d\n", len(queue))
+			}
 			queue = queue[1:]
 			if verbose {
-				fmt.Println(len(queue))
-				fmt.Println(currentEvent)
+				fmt.Printf("LEN: %d\n", len(queue))
 				time.Sleep(200 * time.Millisecond)
 			}
-			currentAncestorFromOwner, ok := latestAncestors[currentEvent.Owner]
+			_, ok := latestAncestors[currentEvent.Owner]
 
 			if !ok {
 				latestAncestors[currentEvent.Owner] = currentEvent
-			} else if currentEvent.Round >= currentAncestorFromOwner.Round && n.see(*currentEvent, *currentAncestorFromOwner) {
-				latestAncestors[currentEvent.Owner] = currentEvent
 			}
+			// TODO: this part should be included but currently causing problems
+			// else if currentEvent.Round >= currentAncestorFromOwner.Round && n.see(currentEvent, currentAncestorFromOwner) {
+			//    latestAncestors[currentEvent.Owner] = currentEvent
+			//}
 
-			if !isInitial(*currentEvent) {
-				selfParent := n.Events[currentEvent.SelfParentHash]
+			if !isInitial(currentEvent) {
+				selfParent := *n.Events[currentEvent.SelfParentHash]
 				if selfParent.Round >= minRound {
 					queue = append(queue, selfParent)
 				}
-				otherParent := n.Events[currentEvent.OtherParentHash]
+				otherParent := *n.Events[currentEvent.OtherParentHash]
 				if otherParent.Round >= minRound {
 					queue = append(queue, otherParent)
 				}
@@ -329,12 +356,14 @@ func (n *Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[strin
 // Find witnesses of round r, which is the first event with round r in every node
 func (n *Node) findWitnessesOfARound(r uint32) map[string]*Event {
 	witnesses := make(map[string]*Event, len(n.Hashgraph))
+	n.RWMutex.RLock()
 	for addr := range n.Hashgraph {
 		w, ok := n.Witnesses[addr][r]
 		if ok {
 			witnesses[addr] = w
 		}
 	}
+	n.RWMutex.RUnlock()
 	return witnesses // it is possible that a round does not have a witness on each node sometimes
 }
 
