@@ -1,10 +1,16 @@
 package hashgraph
 
 import (
+	"crypto/rand"
 	"fmt"
 	"math"
 	"sort"
 	"time"
+)
+
+const (
+	verbose           = true // Set true for debug printing
+	signatureByteSize = 64
 )
 
 //Node :
@@ -52,39 +58,65 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 	// Flush the transactions
 	transactions := n.TransactionBuffer
 	n.TransactionBuffer = nil
+
+	signature := make([]byte, signatureByteSize)
+	_, err := rand.Read(signature)
+	handleError(err)
 	newEvent := Event{
-		Owner:           n.Address,
-		Signature:       time.Now().String(), // todo: use RSA
-		SelfParentHash:  n.Hashgraph[n.Address][len(n.Hashgraph[n.Address])-1].Signature,
-		OtherParentHash: n.Hashgraph[events.SenderAddress][len(n.Hashgraph[events.SenderAddress])-1].Signature,
-		Timestamp:       time.Now(),
-		Transactions:    transactions, // todo: use the transaction buffer which grows with user input
-		Round:           0,
-		RoundReceived:   0,
-		IsWitness:       false,
-		IsFamous:        false,
+		Owner:              n.Address,
+		Signature:          string(signature), // todo: use RSA
+		SelfParentHash:     n.Hashgraph[n.Address][len(n.Hashgraph[n.Address])-1].Signature,
+		OtherParentHash:    n.Hashgraph[events.SenderAddress][len(n.Hashgraph[events.SenderAddress])-1].Signature,
+		Timestamp:          time.Now(),
+		Transactions:       transactions,
+		Round:              0,
+		IsWitness:          false,
+		IsFamous:           false,
+		RoundReceived:      0,
+		ConsensusTimestamp: time.Unix(0, 0),
 	}
 	n.Events[newEvent.Signature] = &newEvent
 	n.Hashgraph[n.Address] = append(n.Hashgraph[n.Address], &newEvent)
 
+	if verbose {
+		fmt.Println("moving on 3")
+	}
 	n.DivideRounds(&newEvent)
+	if verbose {
+		fmt.Println("moving on 4")
+	}
 	n.DecideFame()
+	if verbose {
+		fmt.Println("moving on 5")
+	}
 	n.FindOrder()
-
+	if verbose {
+		fmt.Println("moving on 6")
+	}
+	*success = true
 	return nil
 }
 
 //DivideRounds : Calculates the round of a new event
-func (n Node) DivideRounds(e *Event) {
+func (n *Node) DivideRounds(e *Event) {
 	selfParent := n.Events[e.SelfParentHash]
 	otherParent := n.Events[e.OtherParentHash]
 	r := max(selfParent.Round, otherParent.Round)
+	if verbose {
+		fmt.Println("movin on 7")
+	}
 	witnesses := n.findWitnessesOfARound(r)
+	if verbose {
+		fmt.Println("movin on 8")
+	}
 	stronglySeenWitnessCount := 0
 	for _, w := range witnesses {
 		if n.stronglySee(*e, *w) {
 			stronglySeenWitnessCount++
 		}
+	}
+	if verbose {
+		fmt.Println("movin on 9")
 	}
 	if stronglySeenWitnessCount > int(math.Ceil(2.0*float64(len(n.Hashgraph))/3.0)) {
 		e.Round = r + 1
@@ -104,7 +136,7 @@ func (n Node) DivideRounds(e *Event) {
 
 //DecideFame : Decides if a witness is famous or not
 // note: we did not implement a coin round yet
-func (n Node) DecideFame() {
+func (n *Node) DecideFame() {
 	var fameUndecidedWitnesses []*Event // this is "for each x" in the paper
 	for addr := range n.Hashgraph {
 		for round, witness := range n.Witnesses[addr] { // todo: optimize the access
@@ -159,7 +191,7 @@ func (n Node) DecideFame() {
 }
 
 //FindOrder : Arrive at a consensus on the order of events
-func (n Node) FindOrder() {
+func (n *Node) FindOrder() {
 	var nonConsensusEvents []*Event
 	for addr := range n.Hashgraph {
 		nonConsensusEvents = append(nonConsensusEvents, n.Hashgraph[addr][n.FirstEventOfNotConsensusIndex[addr]:]...)
@@ -223,7 +255,7 @@ func (n Node) FindOrder() {
 }
 
 // If we can reach to target using downward edges only, we can see it. Downward in this case means that we reach through either parent. This function is used for voting
-func (n Node) see(current Event, target Event) bool {
+func (n *Node) see(current Event, target Event) bool {
 	if current.Signature == target.Signature {
 		return true
 	}
@@ -231,13 +263,18 @@ func (n Node) see(current Event, target Event) bool {
 		return false
 	}
 
-	// Go has short-circuit evaluation, which we utilize here
 	return n.see(*n.Events[current.SelfParentHash], target) || n.see(*n.Events[current.OtherParentHash], target)
 }
 
 // If we see the target, and we go through 2n/3 different nodes as we do that, we say we strongly see that target. This function is used for choosing the famous witness
-func (n Node) stronglySee(current Event, target Event) bool {
+func (n *Node) stronglySee(current Event, target Event) bool {
+	if verbose {
+		fmt.Println("moving on 10")
+	}
 	latestAncestors := n.getLatestAncestorFromAllNodes(current, target.Round)
+	if verbose {
+		fmt.Println("moving on 11")
+	}
 	count := 0
 	for _, latestAncestor := range latestAncestors {
 		if n.see(*latestAncestor, target) {
@@ -249,7 +286,7 @@ func (n Node) stronglySee(current Event, target Event) bool {
 }
 
 // todo: comment
-func (n Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[string]*Event {
+func (n *Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[string]*Event {
 	latestAncestors := make(map[string]*Event, len(n.Hashgraph))
 	if !isInitial(e) {
 		var queue []*Event
@@ -260,7 +297,11 @@ func (n Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[string
 			currentEvent = queue[0]
 			queue[0] = nil
 			queue = queue[1:]
-
+			if verbose {
+				fmt.Println(len(queue))
+				fmt.Println(currentEvent)
+				time.Sleep(200 * time.Millisecond)
+			}
 			currentAncestorFromOwner, ok := latestAncestors[currentEvent.Owner]
 
 			if !ok {
@@ -286,7 +327,7 @@ func (n Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[string
 }
 
 // Find witnesses of round r, which is the first event with round r in every node
-func (n Node) findWitnessesOfARound(r uint32) map[string]*Event {
+func (n *Node) findWitnessesOfARound(r uint32) map[string]*Event {
 	witnesses := make(map[string]*Event, len(n.Hashgraph))
 	for addr := range n.Hashgraph {
 		w, ok := n.Witnesses[addr][r]
@@ -341,4 +382,10 @@ func (p eventPtrSlice) Less(i, j int) bool {
 }
 func (p eventPtrSlice) Swap(i, j int) {
 	p[i], p[j] = p[j], p[i]
+}
+
+func handleError(e error) {
+	if e != nil {
+		panic(e)
+	}
 }

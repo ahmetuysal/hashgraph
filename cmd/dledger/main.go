@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	verbose                    = true                    // Set true for debug printing
-	defaultPort                = "8080"                  // Use this default port if it isn't specified via command line arguments.
-	gossipWaitTime             = 1000 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
-	connectionAttemptDelayTime = 100 * time.Millisecond  // the amount of time.sleep milliseconds between each connection attempt
+	verbose                    = true                      // Set true for debug printing
+	defaultPort                = "8080"                    // Use this default port if it isn't specified via command line arguments.
+	gossipWaitTime             = 900000 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
+	connectionAttemptDelayTime = 100 * time.Millisecond    // the amount of time.sleep milliseconds between each connection attempt
+	signatureByteSize          = 64
 )
 
 func main() {
@@ -49,20 +50,25 @@ func main() {
 	}
 
 	// Setup the Hashgraph
+	signature := make([]byte, signatureByteSize)
+	_, err := rand.Read(signature)
+	handleError(err)
 	initialHashgraph := make(map[string][]*hashgraph.Event, len(peerAddressMap))
 	for addr := range peerAddressMap {
 		initialHashgraph[addr] = make([]*hashgraph.Event, 0) // We should not know any event other than our own event at the start
 	}
 	initialEvent := hashgraph.Event{
-		Owner:           myAddress,
-		Signature:       time.Now().String(), // todo: use RSA
-		SelfParentHash:  "",
-		OtherParentHash: "",
-		Timestamp:       time.Now(),
-		Transactions:    nil,
-		Round:           1,
-		IsWitness:       true, // true because the initial event is the first event of its round
-		IsFamous:        false,
+		Owner:              myAddress,
+		Signature:          string(signature), // todo: use RSA
+		SelfParentHash:     "",
+		OtherParentHash:    "",
+		Timestamp:          time.Now(),
+		Transactions:       nil,
+		Round:              1,
+		IsWitness:          true, // true because the initial event is the first event of its round
+		IsFamous:           false,
+		RoundReceived:      0,
+		ConsensusTimestamp: time.Unix(0, 0),
 	}
 	initialHashgraph[myAddress] = append(initialHashgraph[myAddress], &initialEvent)
 	myNode := hashgraph.Node{
@@ -179,7 +185,7 @@ func gossipRoutine(node hashgraph.Node, peerAddresses []string) {
 		if verbose {
 			fmt.Println("moving on 1")
 		}
-		_ = peerRPCConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil)
+		_ = peerRPCConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) // todo: one peer gets stuck here
 		_ = peerRPCConnection.Close()
 
 		if verbose {
