@@ -61,6 +61,7 @@ func main() {
         Transactions:    nil,
         Round:           1,    // this is defined in the paper to be 1 for initial events
         IsWitness:       true, // true because this is the first event in this round
+        IsFamous:       false
     }
     initialHashgraph[myAddress] = append(initialHashgraph[myAddress], &initialEvent)
     myNode := hashgraph.Node{
@@ -68,7 +69,7 @@ func main() {
         Hashgraph: initialHashgraph,
         Events:    make(map[string]*hashgraph.Event),
     }
-
+    myNode.Witnesses[initialEvent.Owner] = append(myNode.Witnesses[initialEvent.Owner], &initialEvent)
     myNode.Events[initialEvent.Signature] = &initialEvent
 
     // Setup the server
