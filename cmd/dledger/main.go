@@ -17,7 +17,7 @@ import (
 const (
 	verbose                    = true                    // Set true for debug printing
 	defaultPort                = "8080"                  // Use this default port if it isn't specified via command line arguments.
-	gossipWaitTime             = 5000 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
+	gossipWaitTime             = 3000 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
 	connectionAttemptDelayTime = 100 * time.Millisecond  // the amount of time.sleep milliseconds between each connection attempt
 	signatureByteSize          = 64
 )
