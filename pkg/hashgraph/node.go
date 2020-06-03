@@ -57,6 +57,11 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 		for _, missingEvent := range events.MissingEvents[addr] {
 			n.Hashgraph[addr] = append(n.Hashgraph[addr], &missingEvent)
 			n.Events[missingEvent.Signature] = &missingEvent
+			if missingEvent.IsWitness {
+				n.Witnesses[missingEvent.Owner][missingEvent.Round] = &missingEvent
+			}
+			// todo: witnesses / fames / consensus events not checked here
+
 		}
 	}
 
@@ -85,21 +90,20 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 
 	n.RWMutex.Unlock()
 
-
 	if verbose {
-		fmt.Println("moving on 3")
+		fmt.Println("entering DivideRounds")
 	}
 	n.DivideRounds(&newEvent)
 	if verbose {
-		fmt.Println("moving on 4")
+		fmt.Println("exiting DivideRounds\nentering DecideFame")
 	}
 	n.DecideFame()
 	if verbose {
-		fmt.Println("moving on 5")
+		fmt.Println("exiting DecideFame\nentering FindOrder")
 	}
 	n.FindOrder()
 	if verbose {
-		fmt.Println("moving on 6")
+		fmt.Println("exiting FindOrder")
 	}
 	*success = true
 	return nil
@@ -113,11 +117,11 @@ func (n *Node) DivideRounds(e *Event) {
 	n.RWMutex.RUnlock()
 	r := max(selfParent.Round, otherParent.Round)
 	if verbose {
-		fmt.Println("movin on 7")
+		fmt.Printf("entering findWitnessesOfARound(%d)\n", r)
 	}
 	witnesses := n.findWitnessesOfARound(r)
 	if verbose {
-		fmt.Println("movin on 8")
+		fmt.Printf("exited findWitnessesOfARound(%d)\nchecking strongly see for witnesses", r)
 	}
 	stronglySeenWitnessCount := 0
 	for _, w := range witnesses {
@@ -126,7 +130,7 @@ func (n *Node) DivideRounds(e *Event) {
 		}
 	}
 	if verbose {
-		fmt.Println("movin on 9")
+		fmt.Println("finished strongly see checks")
 	}
 	if stronglySeenWitnessCount > int(math.Ceil(2.0*float64(len(n.Hashgraph))/3.0)) {
 		e.Round = r + 1
@@ -136,10 +140,6 @@ func (n *Node) DivideRounds(e *Event) {
 	if e.Round > selfParent.Round { // we do not check if there is no self parent, because we never create the initial event here
 		e.IsWitness = true
 		n.RWMutex.Lock()
-		_, ok := n.Witnesses[e.Owner]
-		if !ok {
-			n.Witnesses[e.Owner] = make(map[uint32]*Event)
-		}
 		n.Witnesses[e.Owner][r] = e
 		n.RWMutex.Unlock()
 	}

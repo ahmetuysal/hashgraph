@@ -15,10 +15,10 @@ import (
 )
 
 const (
-	verbose                    = true                      // Set true for debug printing
-	defaultPort                = "8080"                    // Use this default port if it isn't specified via command line arguments.
-	gossipWaitTime             = 900000 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
-	connectionAttemptDelayTime = 100 * time.Millisecond    // the amount of time.sleep milliseconds between each connection attempt
+	verbose                    = true                    // Set true for debug printing
+	defaultPort                = "8080"                  // Use this default port if it isn't specified via command line arguments.
+	gossipWaitTime             = 5000 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
+	connectionAttemptDelayTime = 100 * time.Millisecond  // the amount of time.sleep milliseconds between each connection attempt
 	signatureByteSize          = 64
 )
 
@@ -79,7 +79,9 @@ func main() {
 		FirstRoundOfFameUndecided:     make(map[string]uint32),
 		FirstEventOfNotConsensusIndex: make(map[string]int),
 	}
-	myNode.Witnesses[initialEvent.Owner] = make(map[uint32]*hashgraph.Event)
+	for addr := range myNode.Hashgraph {
+		myNode.Witnesses[addr] = make(map[uint32]*hashgraph.Event)
+	}
 	myNode.Witnesses[initialEvent.Owner][1] = &initialEvent
 	myNode.Events[initialEvent.Signature] = &initialEvent
 	myNode.FirstRoundOfFameUndecided[initialEvent.Owner] = 1
@@ -183,13 +185,13 @@ func gossipRoutine(node hashgraph.Node, peerAddresses []string) {
 		}
 
 		if verbose {
-			fmt.Println("moving on 1")
+			fmt.Println("remotely calling SyncAllEvents")
 		}
 		_ = peerRPCConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) // todo: one peer gets stuck here
 		_ = peerRPCConnection.Close()
 
 		if verbose {
-			fmt.Println("moving on 2")
+			fmt.Println("exiting remote call to SyncAllEvents")
 		}
 		time.Sleep(gossipWaitTime)
 
