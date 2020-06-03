@@ -171,13 +171,13 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
             fmt.Println(numEventsToSend)
         }
 
-        missingEvents := make(map[string][]hashgraph.Event, len(numEventsToSend))
+        missingEvents := make(map[string][]*hashgraph.Event, len(numEventsToSend))
         for addr := range numEventsToSend {
             if numEventsToSend[addr] > 0 {
                 totalNumEvents := len(node.Hashgraph[addr])
 
                 for _, event := range node.Hashgraph[addr][totalNumEvents-numEventsToSend[addr]:] {
-                    missingEvents[addr] = append(missingEvents[addr], *event)
+                    missingEvents[addr] = append(missingEvents[addr], event)
                 }
             }
         }

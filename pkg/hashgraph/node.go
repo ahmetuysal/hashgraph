@@ -37,7 +37,7 @@ type Transaction struct {
 //SyncEventsDTO : Data transfer object for 2nd call in Gossip: SyncAllEvents
 type SyncEventsDTO struct {
     SenderAddress string
-    MissingEvents map[string][]Event // all missing events, map to peer address -> all events I don't know about this peer
+    MissingEvents map[string][]*Event // all missing events, map to peer address -> all events I don't know about this peer
 }
 
 //GetNumberOfMissingEvents : Node A calls Node B to learn which events B does not know and A knows.
@@ -64,15 +64,22 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 
     for addr := range events.MissingEvents {
         for _, missingEvent := range events.MissingEvents[addr] {
-            n.Hashgraph[addr] = append(n.Hashgraph[addr], &missingEvent)
-            n.Events[missingEvent.Signature] = &missingEvent
+            fmt.Printf("Adding missing event %s\n", missingEvent.Signature)
+            n.Hashgraph[addr] = append(n.Hashgraph[addr], missingEvent)
+            n.Events[missingEvent.Signature] = missingEvent
             if missingEvent.IsWitness {
-                n.Witnesses[missingEvent.Owner][missingEvent.Round] = &missingEvent
+                n.Witnesses[missingEvent.Owner][missingEvent.Round] = missingEvent
             }
             // todo: witnesses / fames / consensus events not checked here
 
         }
     }
+
+    // Print all events
+    for sig, event  := range n.Events {
+        fmt.Printf("Signature %s, Event %s\n", sig, event.Signature)
+    }
+
 
     if verbose {
         fmt.Printf("Hashgraph lengths AFTER:\n[")
@@ -161,7 +168,7 @@ func (n *Node) DivideRounds(e *Event) {
     }
     stronglySeenWitnessCount := 0
     for _, w := range witnesses {
-        if n.stronglySee(*e, *w) {
+        if n.stronglySee(e, w) {
             stronglySeenWitnessCount++
         }
     }
@@ -203,7 +210,7 @@ func (n *Node) DecideFame() {
             witnessesOfRound := n.findWitnessesOfARound(w.Round - 1)
             var stronglySeenWitnessesOfRound []*Event
             for _, wr := range witnessesOfRound {
-                if n.stronglySee(*w, *wr) {
+                if n.stronglySee(w, wr) {
                     stronglySeenWitnessesOfRound = append(stronglySeenWitnessesOfRound, wr)
                 }
             }
@@ -213,7 +220,7 @@ func (n *Node) DecideFame() {
             trueVotes := 0
             falseVotes := 0
             for i, voter := range stronglySeenWitnessesOfRound {
-                if n.see(*voter, *e) {
+                if n.see(voter, e) {
                     votes[i] = true
                     majority++
                     trueVotes++
@@ -253,7 +260,7 @@ func (n *Node) FindOrder() {
             // Second condition: make sure x is seen by all famous witnesses
             condMet := true
             for _, w := range witnesses {
-                if w.IsFamous && !n.see(*w, *e) {
+                if w.IsFamous && !n.see(w, e) {
                     condMet = false
                     break
                 }
@@ -263,12 +270,12 @@ func (n *Node) FindOrder() {
                 var s []*Event
                 for _, w := range witnesses {
                     z := w
-                    for !isInitial(*z) {
+                    for !isInitial(z) {
                         if z.Round < r {
                             // if z is lower than e, e can't be ancestor of z
                             break
                         }
-                        if n.see(*z, *e) && !n.see(*n.Events[z.SelfParentHash], *e) {
+                        if n.see(z, e) && !n.see(n.Events[z.SelfParentHash], e) {
                             s = append(s, z)
                         }
                         z = n.Events[z.SelfParentHash]
@@ -301,7 +308,7 @@ func (n *Node) FindOrder() {
 }
 
 // If we can reach to target using downward edges only, we can see it. Downward in this case means that we reach through either parent. This function is used for voting
-func (n *Node) see(current Event, target Event) bool {
+func (n *Node) see(current *Event, target *Event) bool {
     if current.Signature == target.Signature {
         return true
     }
@@ -309,11 +316,11 @@ func (n *Node) see(current Event, target Event) bool {
         return false
     }
 
-    return n.see(*n.Events[current.SelfParentHash], target) || n.see(*n.Events[current.OtherParentHash], target)
+    return n.see(n.Events[current.SelfParentHash], target) || n.see(n.Events[current.OtherParentHash], target)
 }
 
 // If we see the target, and we go through 2n/3 different nodes as we do that, we say we strongly see that target. This function is used for choosing the famous witness
-func (n *Node) stronglySee(current Event, target Event) bool {
+func (n *Node) stronglySee(current *Event, target *Event) bool {
     if verbose {
         fmt.Println("moving on 10")
     }
@@ -332,20 +339,21 @@ func (n *Node) stronglySee(current Event, target Event) bool {
 }
 
 // todo: comment
-func (n *Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[string]Event {
-    latestAncestors := make(map[string]Event, len(n.Hashgraph))
+func (n *Node) getLatestAncestorFromAllNodes(e *Event, minRound uint32) map[string]*Event {
+    latestAncestors := make(map[string]*Event, len(n.Hashgraph))
     if !isInitial(e) {
-        var queue []Event
+        var queue []*Event
         queue = append(queue, e)
 
-        var currentEvent Event
+        var currentEvent *Event
         for len(queue) > 0 {
-            currentEvent = queue[0]
-            queue = queue[1:]
             if verbose {
-                fmt.Printf("CurrentEvent %+v \n", currentEvent)
-                time.Sleep(200 * time.Millisecond)
+                fmt.Printf("Q: %v\n\n", queue)
             }
+            currentEvent = queue[0]
+            queue[0] = nil
+            queue = queue[1:]
+
             currentAncestorFromOwner, ok := latestAncestors[currentEvent.Owner]
 
             if !ok {
@@ -355,17 +363,23 @@ func (n *Node) getLatestAncestorFromAllNodes(e Event, minRound uint32) map[strin
             }
 
             if !isInitial(currentEvent) {
-                selfParent := *n.Events[currentEvent.SelfParentHash]
-                if selfParent.Round >= minRound {
+
+                selfParent, ok := n.Events[currentEvent.SelfParentHash]
+
+                if selfParent == currentEvent {
+                    fmt.Printf("My parent is myself %+v\n", currentEvent)
+                }
+
+                if ok && selfParent.Round >= minRound {
                     queue = append(queue, selfParent)
                 }
-                otherParent := *n.Events[currentEvent.OtherParentHash]
-                if otherParent.Round >= minRound {
+                otherParent, ok := n.Events[currentEvent.OtherParentHash]
+                if ok && otherParent.Round >= minRound {
                     queue = append(queue, otherParent)
                 }
             }
-
         }
+        fmt.Println("getLatestAncestorFromAllNodes GG")
     }
     return latestAncestors
 }
@@ -390,8 +404,8 @@ func max(a, b uint32) uint32 {
     return b
 }
 
-func isInitial(e Event) bool {
-    return e.Round == 1 && e.IsWitness
+func isInitial(e *Event) bool {
+    return e.SelfParentHash == "" || e.OtherParentHash == ""
 }
 
 /** timeSlice interface for sorting **/
