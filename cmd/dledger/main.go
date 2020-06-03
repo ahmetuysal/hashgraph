@@ -97,7 +97,7 @@ func main() {
 	checkPeersForStart(peerAddresses)
 	fmt.Printf("I am online at %s and all peers are available.\n", myAddress)
 
-	go gossipRoutine(myNode, peerAddresses)
+	go gossipRoutine(&myNode, peerAddresses)
 
 	// Routine for user transaction inputs
 	var input int
@@ -144,14 +144,16 @@ func main() {
 
 }
 
-func gossipRoutine(node hashgraph.Node, peerAddresses []string) {
+func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 	for {
 		randomPeer := peerAddresses[rand.Intn(len(peerAddresses))]
 
 		knownEventNums := make(map[string]int, len(node.Hashgraph))
+		node.RWMutex.RLock()
 		for addr := range node.Hashgraph {
 			knownEventNums[addr] = len(node.Hashgraph[addr])
 		}
+		node.RWMutex.RUnlock()
 
 		if verbose {
 			fmt.Print("Known Events: ")
@@ -169,6 +171,7 @@ func gossipRoutine(node hashgraph.Node, peerAddresses []string) {
 		}
 
 		missingEvents := make(map[string][]hashgraph.Event, len(numEventsToSend))
+		node.RWMutex.RLock()
 		for addr := range numEventsToSend {
 			if numEventsToSend[addr] > 0 {
 				totalNumEvents := len(node.Hashgraph[addr])
@@ -178,6 +181,7 @@ func gossipRoutine(node hashgraph.Node, peerAddresses []string) {
 				}
 			}
 		}
+		node.RWMutex.RUnlock()
 
 		syncEventsDTO := hashgraph.SyncEventsDTO{
 			SenderAddress: node.Address,
