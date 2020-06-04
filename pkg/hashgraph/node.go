@@ -1,5 +1,7 @@
 package hashgraph
 
+// todo: godoc documentations needed
+
 import (
 	"fmt"
 	"math"
@@ -191,7 +193,6 @@ func (n *Node) DivideRounds(e *Event) {
 }
 
 //DecideFame : Decides if a witness is famous or not
-// note: we did not implement a coin round yet
 func (n *Node) DecideFame() {
 	var fameUndecidedWitnesses []*Event // this is "for each x" in the paper
 	for addr := range n.Hashgraph {
@@ -321,6 +322,7 @@ func (n *Node) see(current *Event, target *Event) bool {
 		return false
 	}
 
+	// todo: OPTIMIZE THIS IF POSSIBLE
 	return n.see(n.Events[current.SelfParentHash], target) || n.see(n.Events[current.OtherParentHash], target)
 }
 
