@@ -17,7 +17,7 @@ import (
 
 const (
 	verbose                    = 2                      // 1: prints within RPC, 2: prints within main, 3: evaluation, off otherwise
-	gossipWaitTime             = 150 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
+	gossipWaitTime             = 10 * time.Millisecond  // the amount of time.sleep milliseconds between each random gossip
 	connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
 	randomTransactionCount     = 10                     // How many transactions to generate for each event
 	randomTransactionAmountMax = 500                    // Maximum amount in a random transaction
@@ -187,14 +187,14 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 	//var t1 time.Time
 	//var t2 time.Duration
 	var c int
-	startOfGossip := time.Now()
+	//startOfGossip := time.Now()
 	for {
 		// Choose a peer
 		randomPeer := peerAddresses[rand.Intn(len(peerAddresses))]
 
 		// Calculate how many events I know
 		knownEventNums := make(map[string]int, len(node.Hashgraph))
-		node.RWMutex.Lock() // todo: rlock
+		node.RWMutex.RLock() // todo: rlock
 		for addr := range node.Hashgraph {
 			knownEventNums[addr] = len(node.Hashgraph[addr])
 		}
@@ -223,7 +223,7 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 		missingEvents := make(map[string][]*hashgraph.Event, len(numEventsToSend))
 		for addr := range numEventsToSend {
 			if numEventsToSend[addr] > 0 { /* it is possible for this to be negative, but that is ok, it just means the peer knows stuff I do not, which I will eventually learn via gossip */
-				totalNumEvents := len(node.Hashgraph[addr])
+				totalNumEvents := knownEventNums[addr]
 				for _, event := range node.Hashgraph[addr][totalNumEvents-numEventsToSend[addr]:] {
 					missingEvents[addr] = append(missingEvents[addr], event)
 				}
@@ -248,15 +248,16 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 		c++
 
 		if verbose == 3 && c%printPerMrpcCall == 0 {
-			evalString := createEvaluationString(node, c, startOfGossip)
-			fmt.Println(evalString)
+			//evalString := createEvaluationString(node, c, startOfGossip)
+			//fmt.Println(evalString)
 		}
 
 		if verbose == 2 {
 			fmt.Println("exiting remote call to SyncAllEvents")
 		}
 
-		node.RWMutex.Unlock() // todo: runlock
+		node.RWMutex.RUnlock() // todo: runlock
+
 		time.Sleep(gossipWaitTime)
 
 	}

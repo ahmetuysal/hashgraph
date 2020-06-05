@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	verbose = 1 // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
+	verbose = 2 // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
 )
 
 //Node : A member of the distributed ledger system. Is identified by it's address.
@@ -58,11 +58,11 @@ type SyncEventsDTO struct {
 
 //GetNumberOfMissingEvents : Node A calls Node B to learn which events B does not know and A knows.
 func (n *Node) GetNumberOfMissingEvents(numEventsAlreadyKnown map[string]int, numEventsToSend *map[string]int) error {
-	n.RWMutex.Lock() /// todo: rlock
+	n.RWMutex.RLock() /// todo: rlock
 	for addr := range n.Hashgraph {
 		(*numEventsToSend)[addr] = numEventsAlreadyKnown[addr] - len(n.Hashgraph[addr])
 	}
-	n.RWMutex.Unlock() // todo: runlock
+	n.RWMutex.RUnlock() // todo: runlock
 	return nil
 }
 
