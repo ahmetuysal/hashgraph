@@ -8,6 +8,7 @@ import (
     bootstrap "github.com/asticode/go-astilectron-bootstrap"
     "log"
     "net"
+    "sync"
     "time"
 )
 
@@ -26,6 +27,9 @@ func main() {
     // Create logger
     l := log.New(log.Writer(), log.Prefix(), log.Flags())
 
+    var mut sync.Mutex
+    mut.Lock()
+
     go bootstrap.Run(bootstrap.Options{
         AstilectronOptions: astilectron.Options{
             AppName:            "HashgraphDemo",
@@ -35,6 +39,7 @@ func main() {
         },
         Logger: l,
         OnWait: func(_ *astilectron.Astilectron, ws []*astilectron.Window, _ *astilectron.Menu, _ *astilectron.Tray, _ *astilectron.Menu) error {
+            mut.Unlock()
             w = ws[0]
             return nil
         },
@@ -50,7 +55,7 @@ func main() {
         }},
     })
 
-    time.Sleep(5 * time.Second)
+    mut.Lock()
     w.OpenDevTools()
     port := defaultPort
 
