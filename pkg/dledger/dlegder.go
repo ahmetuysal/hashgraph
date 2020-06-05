@@ -26,11 +26,9 @@ type DLedger struct {
     PeerAddressMap map[string]string
 }
 
-func NewDLedger(port string, peersFilePath string) *DLedger {
+func NewDLedgerFromPeers(port string, peerAddressMap map[string]string) *DLedger  {
     localIPAddress := getLocalAddress()
     myAddress := localIPAddress + ":" + port
-    peerAddressMap := readPeerAddresses(peersFilePath, localIPAddress)
-
     // Assert that your own address is on the peers file
     _, ok := peerAddressMap[myAddress]
     if !ok {
@@ -98,6 +96,13 @@ func NewDLedger(port string, peersFilePath string) *DLedger {
         PeerAddresses:  peerAddresses,
         PeerAddressMap: peerAddressMap,
     }
+}
+
+
+func NewDLedger(port string, peersFilePath string) *DLedger {
+    localIPAddress := getLocalAddress()
+    peerAddressMap := readPeerAddresses(peersFilePath, localIPAddress)
+    return NewDLedgerFromPeers(port, peerAddressMap)
 }
 
 func readPeerAddresses(path string, localIPAddr string) map[string]string {
