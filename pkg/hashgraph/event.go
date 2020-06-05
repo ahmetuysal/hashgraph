@@ -13,6 +13,7 @@ type Event struct {
 	Round              uint32        // Calculated by divideRounds(),  initial event is round 1
 	IsWitness          bool          // Is this event the first event in it's round at it's member?
 	IsFamous           bool          // Is this witness a famous witness?
+	IsFameDecided      bool          // Has there been a decision for this Event's fame?
 	RoundReceived      uint32        // Consensus round
 	ConsensusTimestamp time.Time     // Timestamp assigned by the consensus
 }
