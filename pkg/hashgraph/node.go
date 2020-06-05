@@ -354,14 +354,12 @@ func (n *Node) FindOrder() {
 
 // If we can reach to target using downward edges only, we can see it. Downward in this case means that we reach through either parent. This function is used for voting
 func (n *Node) see(current *Event, target *Event) bool {
-	if current.Signature == target.Signature {
+	if current.Signature == target.Signature || (current.Round > target.Round && current.Owner == target.Owner) {
 		return true
 	}
-	if (current.Round < target.Round) || isInitial(current) {
+	if (current.Round < target.Round) || (current.IsWitness && current.Round == target.Round) || isInitial(current) {
 		return false
 	}
-
-	// todo: OPTIMIZE THIS IF POSSIBLE
 	return n.see(n.Events[current.SelfParentHash], target) || n.see(n.Events[current.OtherParentHash], target)
 }
 
@@ -384,41 +382,50 @@ func (n *Node) stronglySee(current *Event, target *Event) bool {
 	return count > int(math.Ceil(2.0*float64(len(n.Hashgraph))/3.0))
 }
 
-// todo: comment
+// Do breadth first search to find the latest ancestor that event e can see on every node
 func (n *Node) getLatestAncestorFromAllNodes(e *Event, minRound uint32) map[string]*Event {
 	latestAncestors := make(map[string]*Event, len(n.Hashgraph))
 	if !isInitial(e) {
+		// Queue for BFS
 		var queue []*Event
 		queue = append(queue, e)
 
 		var currentEvent *Event
 		for len(queue) > 0 {
+
 			if verbose == 1 {
 				fmt.Printf("Q: %v\n\n", queue)
 			}
+
+			// Pop queue
 			currentEvent = queue[0]
 			queue[0] = nil
 			queue = queue[1:]
 
+			// Check if we have assigned an ancestor for this address yet
 			currentAncestorFromOwner, ok := latestAncestors[currentEvent.Owner]
 
 			if !ok {
+				// if not, assign current
 				latestAncestors[currentEvent.Owner] = currentEvent
-			} else if currentEvent.Round >= currentAncestorFromOwner.Round && n.see(currentEvent, currentAncestorFromOwner) {
+			} else if (currentEvent.Round >= currentAncestorFromOwner.Round) && (currentEvent.Owner == currentAncestorFromOwner.Owner || n.see(currentEvent, currentAncestorFromOwner)) {
+				// if we did, check if current event is higher up
 				latestAncestors[currentEvent.Owner] = currentEvent
 			}
 
+			// If current event is initial, it has no parents, so we should not bother with next iteration
 			if !isInitial(currentEvent) {
-
-				selfParent, ok := n.Events[currentEvent.SelfParentHash]
-
-				if selfParent == currentEvent && verbose == 1 {
+				if verbose == 1 && n.Events[currentEvent.SelfParentHash] == currentEvent {
 					fmt.Printf("My parent is myself %+v\n", currentEvent)
 				}
 
+				// Add self parent to the queue if round is still higher
+				selfParent, ok := n.Events[currentEvent.SelfParentHash]
 				if ok && selfParent.Round >= minRound {
 					queue = append(queue, selfParent)
 				}
+
+				// Add other parent to the queue if round is still higher
 				otherParent, ok := n.Events[currentEvent.OtherParentHash]
 				if ok && otherParent.Round >= minRound {
 					queue = append(queue, otherParent)
@@ -430,6 +437,7 @@ func (n *Node) getLatestAncestorFromAllNodes(e *Event, minRound uint32) map[stri
 }
 
 // Find witnesses of round r, which is the first event with round r in every node
+// note that it is possible that a node does not have a witness on a round r while the others do
 func (n *Node) findWitnessesOfARound(r uint32) map[string]*Event {
 	witnesses := make(map[string]*Event, len(n.Hashgraph))
 	for addr := range n.Hashgraph {
@@ -438,7 +446,7 @@ func (n *Node) findWitnessesOfARound(r uint32) map[string]*Event {
 			witnesses[addr] = w
 		}
 	}
-	return witnesses // it is possible that a round does not have a witness on each node sometimes
+	return witnesses
 }
 
 // There is no built-in max function for uint32...
@@ -476,8 +484,8 @@ func (p eventPtrSlice) Less(i, j int) bool {
 	if p[i].RoundReceived == p[j].RoundReceived {
 		// round recieved may be same, break ties with timestamp
 		if p[i].ConsensusTimestamp == p[j].ConsensusTimestamp {
-			// timestamp may be same (though very unlikely), break by signature
-			return true // TODO: use bits of RSA signature
+			// timestamp may be same (though very unlikely)
+			return true
 		}
 		return p[i].ConsensusTimestamp.Before(p[j].ConsensusTimestamp)
 	}

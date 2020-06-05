@@ -146,9 +146,9 @@ func (dl *DLedger) WaitForPeers() {
 	peerAvailable := make([]bool, len(dl.PeerAddresses))
 	remainingPeers := len(dl.PeerAddresses)
 	for remainingPeers > 0 {
-		for index, isAlreadyResponded := range peerAvailable {
+		for index, hasAlreadyResponded := range peerAvailable {
 			// we have already reached this peer
-			if isAlreadyResponded {
+			if hasAlreadyResponded {
 				continue
 			}
 
