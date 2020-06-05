@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	verbose = 2 // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
+	verbose = 1 // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
 )
 
 //Node : A member of the distributed ledger system. Is identified by it's address.
@@ -58,11 +58,11 @@ type SyncEventsDTO struct {
 
 //GetNumberOfMissingEvents : Node A calls Node B to learn which events B does not know and A knows.
 func (n *Node) GetNumberOfMissingEvents(numEventsAlreadyKnown map[string]int, numEventsToSend *map[string]int) error {
-	n.RWMutex.RLock()
+	n.RWMutex.Lock() /// todo: rlock
 	for addr := range n.Hashgraph {
 		(*numEventsToSend)[addr] = numEventsAlreadyKnown[addr] - len(n.Hashgraph[addr])
 	}
-	n.RWMutex.RUnlock()
+	n.RWMutex.Unlock() // todo: runlock
 	return nil
 }
 
@@ -375,6 +375,7 @@ func (n *Node) FindOrder() {
 					sort.Stable(timestamps) // returns timestamps sorted in increasing order
 					medianTimestamp := timestamps[int(math.Floor(float64(len(timestamps))/2.0))]
 					e.ConsensusTimestamp = medianTimestamp
+					e.Latency = time.Now().Sub(e.Timestamp) // Event's timestamp was set during it's creation
 					n.ConsensusEvents = append(n.ConsensusEvents, e)
 					n.FirstEventOfNotConsensusIndex[e.Owner]++ // !
 				}

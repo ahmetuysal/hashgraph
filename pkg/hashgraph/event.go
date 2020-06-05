@@ -16,4 +16,5 @@ type Event struct {
 	IsFameDecided      bool          // Has there been a decision for this Event's fame?
 	RoundReceived      uint32        // Consensus round
 	ConsensusTimestamp time.Time     // Timestamp assigned by the consensus
+	Latency            time.Duration // How long did it take for this event to reach to a consensus
 }

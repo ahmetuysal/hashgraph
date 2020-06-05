@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/rpc"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,12 +16,13 @@ import (
 )
 
 const (
-	verbose                    = 3                      // 1: prints within RPC, 2: prints within main, 3: timer on, off otherwise
-	gossipWaitTime             = 500 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
+	verbose                    = 2                      // 1: prints within RPC, 2: prints within main, 3: evaluation, off otherwise
+	gossipWaitTime             = 150 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
 	connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
-	randomTransactionCount     = 1024
-	randomTransactionAmountMax = 500
-	randomTransactionAmountMin = 10
+	randomTransactionCount     = 10                     // How many transactions to generate for each event
+	randomTransactionAmountMax = 500                    // Maximum amount in a random transaction
+	randomTransactionAmountMin = 10                     // Minimum amount in a random transaction
+	printPerMrpcCall           = 20                     // After per this many RPC calls, print out evaluations
 )
 
 //DLedger : Struct for a member of the distributed ledger
@@ -107,7 +109,7 @@ func NewDLedger(port string, peersFilePath string) *DLedger {
 //Start : Starts the gossip routine in a go routine.
 func (dl *DLedger) Start() {
 	go gossipRoutine(dl.Node, dl.PeerAddresses)
-	go dl.GenerateTransactions(randomTransactionCount, randomTransactionAmountMax, randomTransactionAmountMin)
+	//go dl.GenerateTransactions(randomTransactionCount, randomTransactionAmountMax, randomTransactionAmountMin)
 }
 
 //PerformTransaction : Adds a transaction to the member's buffer.
@@ -119,6 +121,39 @@ func (dl *DLedger) PerformTransaction(receiverAddr string, amount float64) {
 		Amount:          amount,
 	})
 	dl.Node.RWMutex.Unlock()
+}
+
+func createEvaluationString(node *hashgraph.Node, rpcCallsSoFar int, startOfGossip time.Time) string {
+	// How long have I been gossipping
+	gossipDuration := float64(time.Now().Sub(startOfGossip).Milliseconds()) / 1000.0
+	consensusEvents := node.ConsensusEvents
+	hg := node.Hashgraph
+
+	// How many events have reached consensus
+	numConsensusEvents := len(consensusEvents)
+
+	// What is the average latency among them
+	latencyTotal := int64(0)
+	for _, e := range consensusEvents {
+		latencyTotal += e.Latency.Milliseconds()
+	}
+	latencyAvg := (float64(latencyTotal) / float64(numConsensusEvents)) / 1000.0 // convert to secs
+
+	// How many events are there in total
+	numEvents := 0
+	for addr := range hg {
+		numEvents += len(hg[addr])
+	}
+
+	str := "\n#### EVAL ####" +
+		"\n\tGossip Runtime:" + strconv.FormatFloat(gossipDuration, 'f', 5, 64) + " (sec)" +
+		"\n\tGossip Count:" + strconv.Itoa(rpcCallsSoFar) +
+		"\n\tAvg Latency: " + strconv.FormatFloat(latencyAvg, 'f', 5, 64) + " (sec)" +
+		"\n\tNum. of Events : " + strconv.Itoa(numEvents) +
+		"\n\tNum. of Consensus Events : " + strconv.Itoa(numConsensusEvents) +
+		"\n#### EVAL ####\n"
+
+	return str
 }
 
 //GenerateTransactions : Generates an arbitrary amount of random transactions
@@ -137,9 +172,9 @@ func (dl *DLedger) GenerateTransactions(count int, max float64, min float64) {
 			}
 		}
 		// Wait for node to be available
-		for len(dl.Node.TransactionBuffer) != 0 {
-			// busy waiting
-		}
+		//for len(dl.Node.TransactionBuffer) != 0 {
+		//	// busy waiting
+		//}
 		dl.Node.RWMutex.Lock()
 		dl.Node.TransactionBuffer = transactions
 		dl.Node.RWMutex.Unlock()
@@ -149,21 +184,22 @@ func (dl *DLedger) GenerateTransactions(count int, max float64, min float64) {
 
 // Infinite loop of gossip routine, each gossip delayed by a constant time.
 func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
-	var t1 time.Time
-	var t2 time.Duration
+	//var t1 time.Time
+	//var t2 time.Duration
 	var c int
+	startOfGossip := time.Now()
 	for {
 		// Choose a peer
 		randomPeer := peerAddresses[rand.Intn(len(peerAddresses))]
 
 		// Calculate how many events I know
 		knownEventNums := make(map[string]int, len(node.Hashgraph))
-		node.RWMutex.RLock()
+		node.RWMutex.Lock() // todo: rlock
 		for addr := range node.Hashgraph {
 			knownEventNums[addr] = len(node.Hashgraph[addr])
 		}
 
-		if verbose == 2 {
+		if verbose == 4 {
 			fmt.Print("Known Events:\n")
 			for addr, num := range knownEventNums {
 				fmt.Printf("\t%s : %d\n", addr, num)
@@ -176,7 +212,7 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 		numEventsToSend := make(map[string]int, len(node.Hashgraph))
 		_ = peerRPCConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend)
 
-		if verbose == 2 {
+		if verbose == 4 {
 			fmt.Print("Events to send:\n")
 			for addr, num := range numEventsToSend {
 				fmt.Printf("\t%s : %d\n", addr, num)
@@ -204,24 +240,23 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 			fmt.Println("remotely calling SyncAllEvents")
 		}
 
-		t1 = time.Now()
+		//t1 = time.Now()
 		_ = peerRPCConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) // todo: one peer gets stuck here
 		_ = peerRPCConnection.Close()
-		node.RWMutex.RUnlock()
-		t2 = time.Since(t1)
+
+		//t2 = time.Since(t1)
 		c++
 
-		if verbose == 3 {
-			if c%500 == 0 {
-				fmt.Printf("RPC call %d took %d (micro sec)\n", c, t2.Microseconds())
-			}
-
+		if verbose == 3 && c%printPerMrpcCall == 0 {
+			evalString := createEvaluationString(node, c, startOfGossip)
+			fmt.Println(evalString)
 		}
 
 		if verbose == 2 {
 			fmt.Println("exiting remote call to SyncAllEvents")
 		}
 
+		node.RWMutex.Unlock() // todo: runlock
 		time.Sleep(gossipWaitTime)
 
 	}
