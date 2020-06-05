@@ -148,12 +148,13 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 	// Find the round & witness of new event
 	t1 := time.Now()
 	n.DivideRounds(&newEvent)
-	t2 := time.Since(t1)
+	t2 := time.Now()
 	if verbose == 3 {
-		fmt.Printf("\n\tDivideRounds took %d (ns)\n", t2.Nanoseconds())
+		fmt.Printf("\n\tDivideRounds took %v\n", t2.Sub(t1))
 	}
-	fmt.Printf("\t\tNew event round: %d\n", newEvent.Round)
-
+	if verbose == 2 {
+		fmt.Printf("\t\tNew event round: %d\n", newEvent.Round)
+	}
 	if verbose == 1 {
 		fmt.Println("exiting DivideRounds\nentering DecideFame")
 	}
@@ -168,9 +169,9 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 	// Decide fame on fame-undecided witnesses
 	t1 = time.Now()
 	n.DecideFame()
-	t2 = time.Since(t1)
+	t2 = time.Now()
 	if verbose == 3 {
-		fmt.Printf("\tDecideFame took %d (ns)\n", t2.Nanoseconds())
+		fmt.Printf("\tDecideFame took %v\n", t2.Sub(t1))
 	}
 
 	if verbose == 1 {
@@ -180,9 +181,9 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 	// Arrive to consensus on order of events
 	t1 = time.Now()
 	n.FindOrder()
-	t2 = time.Since(t1)
+	t2 = time.Now()
 	if verbose == 3 {
-		fmt.Printf("\tFindOrder took %d (ns)\n", t2.Nanoseconds())
+		fmt.Printf("\tFindOrder took %v\n", t2.Sub(t1))
 	}
 
 	if verbose == 1 {
