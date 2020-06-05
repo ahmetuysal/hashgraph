@@ -18,6 +18,9 @@ const (
 	verbose                    = 3                      // 1: prints within RPC, 2: prints within main, 3: timer on, off otherwise
 	gossipWaitTime             = 500 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
 	connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
+	randomTransactionCount     = 1024
+	randomTransactionAmountMax = 500
+	randomTransactionAmountMin = 10
 )
 
 //DLedger : Struct for a member of the distributed ledger
@@ -101,27 +104,10 @@ func NewDLedger(port string, peersFilePath string) *DLedger {
 	}
 }
 
-// Read the node addresses and names, return a map from addresses to names
-func readPeerAddresses(path string, localIPAddr string) map[string]string {
-	file, err := os.Open(path)
-	handleError(err)
-	defer func() {
-		handleError(file.Close())
-	}()
-
-	// Addr to name map
-	peers := make(map[string]string)
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		addrName := strings.Split(scanner.Text(), " ")
-		peers[strings.Replace(addrName[0], "localhost", localIPAddr, 1)] = addrName[1]
-	}
-	return peers
-}
-
 //Start : Starts the gossip routine in a go routine.
 func (dl *DLedger) Start() {
 	go gossipRoutine(dl.Node, dl.PeerAddresses)
+	go dl.GenerateTransactions(randomTransactionCount, randomTransactionAmountMax, randomTransactionAmountMin)
 }
 
 //PerformTransaction : Adds a transaction to the member's buffer.
@@ -135,35 +121,37 @@ func (dl *DLedger) PerformTransaction(receiverAddr string, amount float64) {
 	dl.Node.RWMutex.Unlock()
 }
 
-//WaitForPeers : Waits for all members in the member list to be online and responsive.
-func (dl *DLedger) WaitForPeers() {
-	peerAvailable := make([]bool, len(dl.PeerAddresses))
-	remainingPeers := len(dl.PeerAddresses)
-	for remainingPeers > 0 {
-		for index, hasAlreadyResponded := range peerAvailable {
-			// we have already reached this peer
-			if hasAlreadyResponded {
-				continue
-			}
-
-			rpcConnection, err := rpc.Dial("tcp", dl.PeerAddresses[index])
-			if err != nil {
-				time.Sleep(connectionAttemptDelayTime)
-				continue
-			} else {
-				_ = rpcConnection.Close()
-				peerAvailable[index] = true
-				remainingPeers--
+//GenerateTransactions : Generates an arbitrary amount of random transactions
+// this is used as a subroutine that waits
+func (dl *DLedger) GenerateTransactions(count int, max float64, min float64) {
+	for {
+		// Prepare transactions
+		transactions := make([]hashgraph.Transaction, count)
+		for i := 0; i < count; i++ {
+			randomPeerAddress := dl.PeerAddresses[rand.Intn(len(dl.PeerAddresses))]
+			randomAmount := min + rand.Float64()*(max-min)
+			transactions[i] = hashgraph.Transaction{
+				SenderAddress:   dl.Node.Address,
+				ReceiverAddress: randomPeerAddress,
+				Amount:          randomAmount,
 			}
 		}
+		// Wait for node to be available
+		for len(dl.Node.TransactionBuffer) != 0 {
+			// busy waiting
+		}
+		dl.Node.RWMutex.Lock()
+		dl.Node.TransactionBuffer = transactions
+		dl.Node.RWMutex.Unlock()
 	}
+
 }
 
 // Infinite loop of gossip routine, each gossip delayed by a constant time.
 func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
-	//var t1 time.Time
-	//var t2 time.Duration
-	//var c int
+	var t1 time.Time
+	var t2 time.Duration
+	var c int
 	for {
 		// Choose a peer
 		randomPeer := peerAddresses[rand.Intn(len(peerAddresses))]
@@ -216,16 +204,19 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 			fmt.Println("remotely calling SyncAllEvents")
 		}
 
-		//t1 = time.Now()
+		t1 = time.Now()
 		_ = peerRPCConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) // todo: one peer gets stuck here
 		_ = peerRPCConnection.Close()
 		node.RWMutex.RUnlock()
-		//t2 = time.Since(t1)
-		//c++
+		t2 = time.Since(t1)
+		c++
 
-		//if verbose == 3 {
-		//	fmt.Printf("RPC call %d took %d (micro sec)\n", c, t2.Microseconds())
-		//}
+		if verbose == 3 {
+			if c%500 == 0 {
+				fmt.Printf("RPC call %d took %d (micro sec)\n", c, t2.Microseconds())
+			}
+
+		}
 
 		if verbose == 2 {
 			fmt.Println("exiting remote call to SyncAllEvents")
@@ -233,6 +224,48 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 
 		time.Sleep(gossipWaitTime)
 
+	}
+}
+
+// Read the node addresses and names, return a map from addresses to names
+func readPeerAddresses(path string, localIPAddr string) map[string]string {
+	file, err := os.Open(path)
+	handleError(err)
+	defer func() {
+		handleError(file.Close())
+	}()
+
+	// Addr to name map
+	peers := make(map[string]string)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		addrName := strings.Split(scanner.Text(), " ")
+		peers[strings.Replace(addrName[0], "localhost", localIPAddr, 1)] = addrName[1]
+	}
+	return peers
+}
+
+//WaitForPeers : Waits for all members in the member list to be online and responsive.
+func (dl *DLedger) WaitForPeers() {
+	peerAvailable := make([]bool, len(dl.PeerAddresses))
+	remainingPeers := len(dl.PeerAddresses)
+	for remainingPeers > 0 {
+		for index, hasAlreadyResponded := range peerAvailable {
+			// we have already reached this peer
+			if hasAlreadyResponded {
+				continue
+			}
+
+			rpcConnection, err := rpc.Dial("tcp", dl.PeerAddresses[index])
+			if err != nil {
+				time.Sleep(connectionAttemptDelayTime)
+				continue
+			} else {
+				_ = rpcConnection.Close()
+				peerAvailable[index] = true
+				remainingPeers--
+			}
+		}
 	}
 }
 

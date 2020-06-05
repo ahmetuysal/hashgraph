@@ -13,8 +13,7 @@ import (
 )
 
 const (
-	verbose           = 3  // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
-	signatureByteSize = 64 // Number of bytes for the signature
+	verbose = 2 // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
 )
 
 //Node : A member of the distributed ledger system. Is identified by it's address.
@@ -153,7 +152,7 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 		fmt.Printf("\n\tDivideRounds took %v\n", t2.Sub(t1))
 	}
 	if verbose == 2 {
-		fmt.Printf("\t\tNew event round: %d\n", newEvent.Round)
+		fmt.Printf("\tNew event round: %d with %d transactions\n", newEvent.Round, len(newEvent.Transactions))
 	}
 	if verbose == 1 {
 		fmt.Println("exiting DivideRounds\nentering DecideFame")
@@ -263,7 +262,7 @@ func (n *Node) DecideFame() {
 	// Get the last witnesses that does not have a decided fame
 	var fameUndecidedWitnesses []*Event // this is "for each x" in the paper
 	for addr := range n.Hashgraph {
-		for round, witness := range n.Witnesses[addr] { // todo: optimize the access
+		for round, witness := range n.Witnesses[addr] {
 			if round >= n.FirstRoundOfFameUndecided[addr] {
 				fameUndecidedWitnesses = append(fameUndecidedWitnesses, witness)
 			}
@@ -274,7 +273,7 @@ func (n *Node) DecideFame() {
 		// Get all witnesses that have greater rounds
 		var witnessesWithGreaterRounds []*Event
 		for addr := range n.Hashgraph {
-			for round, witness := range n.Witnesses[addr] { // todo: optimize the access
+			for round, witness := range n.Witnesses[addr] {
 				if round > e.Round {
 					witnessesWithGreaterRounds = append(witnessesWithGreaterRounds, witness)
 				}
