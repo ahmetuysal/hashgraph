@@ -13,7 +13,7 @@ import (
 )
 
 const (
-    verbose           = 3  // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
+    verbose           = 0  // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
     signatureByteSize = 64 // Number of bytes for the signature
 )
 

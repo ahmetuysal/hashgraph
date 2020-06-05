@@ -15,7 +15,7 @@ import (
 )
 
 const (
-    verbose                    = 3                      // 1: prints within RPC, 2: prints within main, 3: timer on, off otherwise
+    verbose                    = 0                      // 1: prints within RPC, 2: prints within main, 3: timer on, off otherwise
     gossipWaitTime             = 500 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
     connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
 )
@@ -70,14 +70,8 @@ func NewDLedgerFromPeers(port string, peerAddressMap map[string]string) *DLedger
         ConsensusTimestamp: time.Unix(0, 0),
     }
     initialHashgraph[myAddress] = append(initialHashgraph[myAddress], &initialEvent)
-    myNode := hashgraph.Node{
-        Address:                       myAddress,
-        Hashgraph:                     initialHashgraph,
-        Events:                        make(map[string]*hashgraph.Event),
-        Witnesses:                     make(map[string]map[uint32]*hashgraph.Event),
-        FirstRoundOfFameUndecided:     make(map[string]uint32),
-        FirstEventOfNotConsensusIndex: make(map[string]int),
-    }
+    myNode := hashgraph.NewNode(initialHashgraph, myAddress)
+
     for addr := range myNode.Hashgraph {
         myNode.Witnesses[addr] = make(map[uint32]*hashgraph.Event)
     }
@@ -87,13 +81,13 @@ func NewDLedgerFromPeers(port string, peerAddressMap map[string]string) *DLedger
     myNode.FirstEventOfNotConsensusIndex[initialEvent.Owner] = 0 // index 0 for the initial event
 
     // Setup the server
-    _ = rpc.Register(&myNode)
+    _ = rpc.Register(myNode)
     tcpAddr, _ := net.ResolveTCPAddr("tcp", myAddress)
     listener, _ := net.ListenTCP("tcp", tcpAddr)
     go listenForRPCConnections(listener)
 
     return &DLedger{
-        Node:           &myNode,
+        Node:           myNode,
         MyAddress:      myAddress,
         PeerAddresses:  peerAddresses,
         PeerAddressMap: peerAddressMap,
