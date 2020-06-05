@@ -1,18 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8">
-    <link rel="stylesheet" href="static/css/base.css"/>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" type="text/css" href="static/css/base.css"/>
     <link rel="stylesheet" href="static/lib/astiloader/astiloader.css">
     <link rel="stylesheet" href="static/lib/astimodaler/astimodaler.css">
     <link rel="stylesheet" href="static/lib/astinotifier/astinotifier.css">
-    <link rel="stylesheet" href="static/lib/font-awesome-4.7.0/css/font-awesome.min.css">
+    <script type="text/javascript" src="static/js/index.js" defer></script>
+    <script src="static/lib/astiloader/astiloader.js"></script>
+    <script src="static/lib/astimodaler/astimodaler.js"></script>
+    <script src="static/lib/astinotifier/astinotifier.js"></script>
+    <title>Hashgraph Visualization</title>
 </head>
 <body>
-<h1> Hello World!</h1>
-<h1> Hello World!</h1>
-<h1> Hello World!</h1>
-<h1> Hello World!</h1>
-<h1> Hello World!</h1>
+    <div class="container">
+        <div class="d-flex width-full visuals"> 
+            <canvas id="canvas" width="1080" height="720"></canvas>
+            <div id="transactions">
+                <h2>Transactions</h2>
+            </div>
+        </div>
+        <div class="d-flex width-full controls">
+            <label for="peers">Peer:</label>
+            <select name="peers" id="peers"></select>
+
+            <label for="amount">Amount:</label>
+            <input type="number" id="amount" name="amount">
+
+            <button>Send</button>
+        </div>
+    </div>
 </body>
+
 </html>
