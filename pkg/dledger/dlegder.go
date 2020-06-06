@@ -17,9 +17,9 @@ import (
 
 const (
 	verbose                    = 3                      // 1: prints within RPC, 2: prints within main, 3: evaluation, off otherwise
-	gossipWaitTime             = 1 * time.Millisecond   // the amount of time.sleep milliseconds between each random gossip
+	gossipWaitTime             = 0 * time.Millisecond   // the amount of time.sleep milliseconds between each random gossip
 	connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
-	printPerMrpcCall           = 100                    // After per this many RPC calls, print out evaluations
+	printPerMrpcCall           = 500                    // After per this many RPC calls, print out evaluations
 )
 
 //DLedger : Struct for a member of the distributed ledger
