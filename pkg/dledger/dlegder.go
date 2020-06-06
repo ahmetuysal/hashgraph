@@ -16,11 +16,10 @@ import (
 )
 
 const (
-	verbose                    = 3                      // 1: prints within RPC, 2: prints within main, 3: evaluation, off otherwise
-	gossipWaitTime             = 0 * time.Millisecond   // the amount of time.sleep milliseconds between each random gossip
-	connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
-	printPerMrpcCall           = 250                    // After per this many RPC calls, print out evaluations
-	eventThreshold             = 5000                   // After this many events, print out evaluations
+	verbose                    = 3                       // 1: prints within RPC, 2: prints within main, 3: evaluation, off otherwise
+	gossipWaitTime             = 2000 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
+	connectionAttemptDelayTime = 100 * time.Millisecond  // the amount of time.sleep milliseconds between each connection attempt
+	printPerMrpcCall           = 100                     // After per this many RPC calls, print out evaluations
 )
 
 //DLedger : Struct for a member of the distributed ledger
@@ -31,13 +30,9 @@ type DLedger struct {
 	PeerAddressMap map[string]string
 }
 
-//NewDLedger : Initialize a member in the distributed ledger.
-// This is not adding a new member, but rather reading a member from a list and initializing it.
-func NewDLedger(port string, peersFilePath string) *DLedger {
+func NewDLedgerFromPeers(port string, peerAddressMap map[string]string) *DLedger {
 	localIPAddress := getLocalAddress()
 	myAddress := localIPAddress + ":" + port
-	peerAddressMap := readPeerAddresses(peersFilePath, localIPAddress)
-
 	// Assert that your own address is on the peers file
 	_, ok := peerAddressMap[myAddress]
 	if !ok {
@@ -65,7 +60,7 @@ func NewDLedger(port string, peersFilePath string) *DLedger {
 	}
 	initialEvent := hashgraph.Event{
 		Owner:              myAddress,
-		Signature:          signature,
+		Signature:          signature, // todo: use RSA
 		SelfParentHash:     "",
 		OtherParentHash:    "",
 		Timestamp:          time.Now(),
@@ -78,13 +73,12 @@ func NewDLedger(port string, peersFilePath string) *DLedger {
 		ConsensusTimestamp: time.Unix(0, 0),
 	}
 	initialHashgraph[myAddress] = append(initialHashgraph[myAddress], &initialEvent)
-
-	// Initialize the node
 	myNode := hashgraph.NewNode(initialHashgraph, myAddress)
 
 	for addr := range myNode.Hashgraph {
 		myNode.Witnesses[addr] = make(map[uint32]*hashgraph.Event)
 		myNode.FirstEventOfNotConsensusIndex[addr] = 0 // index 0 for the initial event
+
 	}
 	myNode.Witnesses[initialEvent.Owner][1] = &initialEvent
 	myNode.Events[initialEvent.Signature] = &initialEvent
@@ -102,6 +96,14 @@ func NewDLedger(port string, peersFilePath string) *DLedger {
 		PeerAddresses:  peerAddresses,
 		PeerAddressMap: peerAddressMap,
 	}
+}
+
+//NewDLedger : Initialize a member in the distributed ledger.
+// This is not adding a new member, but rather reading a member from a list and initializing it.
+func NewDLedger(port string, peersFilePath string) *DLedger {
+	localIPAddress := getLocalAddress()
+	peerAddressMap := readPeerAddresses(peersFilePath, localIPAddress)
+	return NewDLedgerFromPeers(port, peerAddressMap)
 }
 
 //Start : Starts the gossip routine in a go routine.

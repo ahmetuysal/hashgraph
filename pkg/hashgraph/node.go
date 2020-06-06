@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	verbose                    = 0    // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
-	randomTransactionCount     = 256 // How many transactions to generate for each event
-	randomTransactionAmountMax = 500  // Maximum amount in a random transaction
-	randomTransactionAmountMin = 10   // Minimum amount in a random transaction
+	verbose                    = 0   // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
+	randomTransactionCount     = 2   // How many transactions to generate for each event
+	randomTransactionAmountMax = 500 // Maximum amount in a random transaction
+	randomTransactionAmountMin = 10  // Minimum amount in a random transaction
 )
 
 //Node : A member of the distributed ledger system. Is identified by it's address.
@@ -49,9 +49,9 @@ func NewNode(initialHashgraph map[string][]*Event, address string) *Node {
 
 //Transaction : A statement of money transfer from a sender to a receiver.
 type Transaction struct {
-	SenderAddress   string  // ip:port of sender
-	ReceiverAddress string  // ip:port of receiver
-	Amount          float64 // amount
+	SenderAddress   string  `json:"sender_address"`   // ip:port of sender
+	ReceiverAddress string  `json:"receiver_address"` // ip:port of receiver
+	Amount          float64 `json:"amount"`           // amount
 }
 
 //SyncEventsDTO : Data Transfer Object for SyncAllEvents function
@@ -525,13 +525,11 @@ func (n *Node) getLatestAncestorFromAllNodes(e *Event, minRound uint32) map[stri
 		}
 	}
 	return latestAncestors
-
 }
 
 // Find witnesses of round r, which is the first event with round r in every node
 // note that it is possible that a node does not have a witness on a round r while the others do
 func (n *Node) findWitnessesOfARound(r uint32) map[string]*Event {
-
 	witnesses := make(map[string]*Event, len(n.Hashgraph))
 	for addr := range n.Hashgraph {
 		w, ok := n.Witnesses[addr][r]
@@ -540,7 +538,6 @@ func (n *Node) findWitnessesOfARound(r uint32) map[string]*Event {
 		}
 	}
 	return witnesses
-
 }
 
 // There is no built-in max function for uint32...
@@ -562,6 +559,11 @@ func (n *Node) GenerateTransactions(count int, max float64, min float64, peerAdd
 	transactions := make([]Transaction, count)
 	for i := 0; i < count; i++ {
 		randomPeerAddress := peerAddress[rand.Intn(len(peerAddress))]
+		// TODO: prevent this in first place
+		for randomPeerAddress == "" {
+			randomPeerAddress = peerAddress[rand.Intn(len(peerAddress))]
+		}
+
 		randomAmount := min + rand.Float64()*(max-min)
 		transactions[i] = Transaction{
 			SenderAddress:   n.Address,
