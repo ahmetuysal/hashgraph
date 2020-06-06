@@ -165,6 +165,7 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 	c := 0
 	startOfGossip := time.Now()
 	var err error
+	eventEvaluationMilestonReached := false
 	for {
 		// Choose a peer
 		randomPeerConnection := peerClientMap[peerAddresses[rand.Intn(len(peerAddresses))]] /* V2 */
@@ -200,8 +201,8 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 			fmt.Println("getting missing events")
 		}
 
-		if verbose == 3 && numEvents >= 5000 {
-			numEvents = 0 // so that this is not true all the time
+		if verbose == 3 && numEvents >= 5000 && !eventEvaluationMilestonReached {
+			eventEvaluationMilestonReached = true
 			evalString := createEvaluationString(node, c, startOfGossip)
 			fmt.Println(evalString)
 		}
