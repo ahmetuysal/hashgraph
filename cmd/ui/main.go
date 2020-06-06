@@ -39,8 +39,8 @@ func main() {
         },
         Logger: l,
         OnWait: func(_ *astilectron.Astilectron, ws []*astilectron.Window, _ *astilectron.Menu, _ *astilectron.Tray, _ *astilectron.Menu) error {
-            mut.Unlock()
             w = ws[0]
+            mut.Unlock()
             return nil
         },
         Windows: []*bootstrap.Window{{
@@ -56,7 +56,10 @@ func main() {
     })
 
     mut.Lock()
-    w.OpenDevTools()
+
+    // TODO: remove this
+    _ = w.OpenDevTools()
+
     port := defaultPort
 
     localAddr := getLocalAddress()
@@ -64,6 +67,8 @@ func main() {
     peers := make(map[string]string)
     peers[localAddr+":8080"] = "Alice"
     peers[localAddr+":9090"] = "Bob"
+
+    _ = bootstrap.SendMessage(w, "peers", peers)
 
     distributedLedger := dledger.NewDLedgerFromPeers(port, peers)
 
@@ -76,8 +81,9 @@ func main() {
         time.Sleep(updatePeriod)
         distributedLedger.Node.RWMutex.RLock()
         for _, newConsensusEvent := range distributedLedger.Node.ConsensusEvents[knownConsensusEvents:] {
-            _ = bootstrap.SendMessage(w, "event", newConsensusEvent)
+           _ = bootstrap.SendMessage(w, "event", newConsensusEvent)
         }
+        knownConsensusEvents = len(distributedLedger.Node.ConsensusEvents)
         distributedLedger.Node.RWMutex.RUnlock()
     }
 
