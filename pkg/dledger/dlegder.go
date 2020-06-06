@@ -19,7 +19,7 @@ const (
 	verbose                    = 3                      // 1: prints within RPC, 2: prints within main, 3: evaluation, off otherwise
 	gossipWaitTime             = 1 * time.Millisecond   // the amount of time.sleep milliseconds between each random gossip
 	connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
-	printPerMrpcCall           = 250                    // After per this many RPC calls, print out evaluations
+	printPerMrpcCall           = 100                    // After per this many RPC calls, print out evaluations
 )
 
 //DLedger : Struct for a member of the distributed ledger
@@ -150,11 +150,23 @@ func createEvaluationString(node *hashgraph.Node, rpcCallsSoFar int, startOfGoss
 
 // Infinite loop of gossip routine, each gossip delayed by a constant time.
 func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
+	// Get RPC clients /* V2 all together */
+
+	peerClientMap := make(map[string]*rpc.Client, len(peerAddresses))
+	for _, addr := range peerAddresses {
+		peerRPCConnection, err := rpc.Dial("tcp", addr)
+		defer peerRPCConnection.Close()
+		handleError(err)
+		peerClientMap[addr] = peerRPCConnection
+	}
+
+	// Start gossip
 	c := 0
 	startOfGossip := time.Now()
 	for {
 		// Choose a peer
-		randomPeer := peerAddresses[rand.Intn(len(peerAddresses))]
+		randomPeerConnection := peerClientMap[peerAddresses[rand.Intn(len(peerAddresses))]] /* V2 */
+		//randomPeer := peerAddresses[rand.Intn(len(peerAddresses))] /* V1 */
 
 		// Calculate how many events I know
 		knownEventNums := make(map[string]int, len(node.Hashgraph))
@@ -164,6 +176,11 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 		}
 
 		node.RWMutex.RLock()
+
+		if verbose == 2 {
+			fmt.Println("entered gossip")
+		}
+
 		for addr := range node.Hashgraph {
 			knownEventNums[addr] = len(node.Hashgraph[addr])
 		}
@@ -175,11 +192,20 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 			}
 		}
 
+		if verbose == 2 {
+			fmt.Println("getting missing events")
+		}
+
 		// Ask the chosen peer how many events they do not know but I know
-		peerRPCConnection, err := rpc.Dial("tcp", randomPeer)
-		handleError(err)
 		numEventsToSend := make(map[string]int, len(node.Hashgraph))
-		_ = peerRPCConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend)
+		//peerRPCconn, err := rpc.Dial("tcp", randomPeer)                                         /* V1 */
+		//handleError(err)                                                                        /* V1 */
+		//_ = peerRPCconn.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend) /* V1 */
+		_ = randomPeerConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend) /* V2 */
+
+		if verbose == 2 {
+			fmt.Println("got missing events")
+		}
 
 		if verbose == 4 {
 			fmt.Print("Events to send:\n")
@@ -189,7 +215,7 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 		}
 
 		// Send the missing events
-		missingEvents := make(map[string][]*hashgraph.Event, len(numEventsToSend))
+		missingEvents := make(map[string][]*hashgraph.Event, len(node.Hashgraph))
 		for addr := range numEventsToSend {
 			if numEventsToSend[addr] > 0 { /* it is possible for this to be negative, but that is ok, it just means the peer knows stuff I do not, which I will eventually learn via gossip */
 				totalNumEvents := knownEventNums[addr]
@@ -216,8 +242,10 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 
 		node.RWMutex.RUnlock()
 
-		_ = peerRPCConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) // todo: one peer gets stuck here
-		_ = peerRPCConnection.Close()
+		//_ = peerRPCconn.Call("Node.SyncAllEvents", syncEventsDTO, nil) /* V1 */
+		//_ = peerRPCconn.Close()                                        /* V1 */
+		_ = randomPeerConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) /* V2 */
+
 		c++
 
 		if verbose == 2 {
@@ -282,7 +310,7 @@ func listenForRPCConnections(listener *net.TCPListener) {
 		if err != nil {
 			continue
 		}
-		rpc.ServeConn(conn)
+		go rpc.ServeConn(conn)
 	}
 }
 

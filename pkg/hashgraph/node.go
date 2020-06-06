@@ -15,7 +15,7 @@ import (
 
 const (
 	verbose                    = 0   // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
-	randomTransactionCount     = 100 // How many transactions to generate for each event
+	randomTransactionCount     = 0   // How many transactions to generate for each event
 	randomTransactionAmountMax = 500 // Maximum amount in a random transaction
 	randomTransactionAmountMin = 10  // Minimum amount in a random transaction
 )
@@ -62,16 +62,17 @@ type SyncEventsDTO struct {
 
 //GetNumberOfMissingEvents : Node A calls Node B to learn which events B does not know and A knows.
 func (n *Node) GetNumberOfMissingEvents(numEventsAlreadyKnown map[string]int, numEventsToSend *map[string]int) error {
-	n.RWMutex.RLock() /// todo: rlock
+	n.RWMutex.RLock()
 	for addr := range n.Hashgraph {
 		(*numEventsToSend)[addr] = numEventsAlreadyKnown[addr] - len(n.Hashgraph[addr])
 	}
-	n.RWMutex.RUnlock() // todo: runlock
+	n.RWMutex.RUnlock()
 	return nil
 }
 
 //SyncAllEvents : Node A first calls GetNumberOfMissingEvents on B, and then sends the missing events in this function
 func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
+	n.RWMutex.Lock()
 	otherPeerAddresses := make([]string, len(n.Hashgraph)-1)
 	for addr := range n.Hashgraph {
 		if addr != n.Address {
@@ -80,8 +81,6 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 
 	}
 	transactions := n.GenerateTransactions(randomTransactionCount, randomTransactionAmountMax, randomTransactionAmountMin, otherPeerAddresses)
-
-	n.RWMutex.Lock()
 
 	if verbose == 1 {
 		fmt.Printf("Syncing nodes %s and %s...\n", events.SenderAddress, n.Address)
@@ -99,13 +98,14 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 			if verbose == 1 {
 				fmt.Printf("Adding missing event %s\n", missingEvent.Signature)
 			}
-
-			n.Hashgraph[addr] = append(n.Hashgraph[addr], missingEvent)
-			n.Events[missingEvent.Signature] = missingEvent
-			if missingEvent.IsWitness {
-				n.Witnesses[missingEvent.Owner][missingEvent.Round] = missingEvent
+			_, ok := n.Events[missingEvent.Signature]
+			if !ok {
+				n.Hashgraph[addr] = append(n.Hashgraph[addr], missingEvent)
+				n.Events[missingEvent.Signature] = missingEvent
+				if missingEvent.IsWitness {
+					n.Witnesses[missingEvent.Owner][missingEvent.Round] = missingEvent
+				}
 			}
-
 		}
 	}
 
@@ -404,6 +404,11 @@ func (n *Node) FindOrder() {
 
 // If we can reach to target using downward edges only, we can see it. Downward in this case means that we reach through either parent. This function is used for voting
 func (n *Node) see(current *Event, target *Event) bool {
+	if verbose == 1 && current == nil {
+		fmt.Printf("NIL GELIYORUM LANNNNNNNNNNNNNNNNNNNN\n")
+
+	}
+
 	dpMap, ok := n.seeDPMemory[current.Signature]
 
 	if !ok {
@@ -425,6 +430,15 @@ func (n *Node) see(current *Event, target *Event) bool {
 		dpMap[target.Signature] = false
 		return false
 	}
+	/* SPONGE >>>
+	selfParent, ok := n.Events[current.SelfParentHash]
+	otherParent, ok := n.Events[current.OtherParentHash]
+	if selfParent == nil || otherParent == nil {
+		fmt.Printf("%+v\n", current)
+
+	}
+	SPONGE <<< */
+
 	result := n.see(n.Events[current.SelfParentHash], target) || n.see(n.Events[current.OtherParentHash], target)
 	dpMap[target.Signature] = result
 	return result
