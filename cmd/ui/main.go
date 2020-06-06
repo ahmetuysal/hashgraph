@@ -49,7 +49,7 @@ func main() {
             Options: &astilectron.WindowOptions{
                 BackgroundColor: astikit.StrPtr("#fff"),
                 Center:          astikit.BoolPtr(true),
-                Height:          astikit.IntPtr(720),
+                Height:          astikit.IntPtr(736),
                 Width:           astikit.IntPtr(1080),
             },
         }},
@@ -57,16 +57,15 @@ func main() {
 
     mut.Lock()
 
-    // TODO: remove this
-    _ = w.OpenDevTools()
-
     port := defaultPort
 
     localAddr := getLocalAddress()
 
     peers := make(map[string]string)
-    peers[localAddr+":8080"] = "Alice"
-    peers[localAddr+":9090"] = "Bob"
+    peers[localAddr+":8080"] = "Ahmet"
+    peers[localAddr+":9090"] = "Erhan"
+    peers[localAddr+":7070"] = "Öznur"
+    peers[localAddr+":6060"] = "Waris"
 
     _ = bootstrap.SendMessage(w, "peers", peers)
 
@@ -76,13 +75,40 @@ func main() {
     distributedLedger.Start()
 
     knownConsensusEvents := 0
+    knownHashgraphEvents := make(map[string]int, len(peers)+1)
+    firstRoundOfFameUndecided := make(map[string]uint32, len(peers)+1)
+    firstRoundOfFameUndecided[distributedLedger.MyAddress] = 0
+    for addr := range peers {
+        firstRoundOfFameUndecided[addr] = 0
+    }
 
     for {
         time.Sleep(updatePeriod)
         distributedLedger.Node.RWMutex.RLock()
-        for _, newConsensusEvent := range distributedLedger.Node.ConsensusEvents[knownConsensusEvents:] {
-           _ = bootstrap.SendMessage(w, "event", newConsensusEvent)
+        for addr := range distributedLedger.Node.Hashgraph {
+            for _, event := range distributedLedger.Node.Hashgraph[addr][knownHashgraphEvents[addr]:] {
+                _ = bootstrap.SendMessage(w, "event", event)
+
+            }
+            knownHashgraphEvents[addr] = len(distributedLedger.Node.Hashgraph[addr])
         }
+
+        for _, newConsensusEvent := range distributedLedger.Node.ConsensusEvents[knownConsensusEvents:] {
+            _ = bootstrap.SendMessage(w, "event", newConsensusEvent)
+        }
+
+        for addr, rofu := range distributedLedger.Node.FirstRoundOfFameUndecided {
+            if rofu > firstRoundOfFameUndecided[addr] {
+                for i := firstRoundOfFameUndecided[addr]; i < rofu; i++ {
+                    witness, ok := distributedLedger.Node.Witnesses[addr][i]
+                    if ok {
+                        _ = bootstrap.SendMessage(w, "event", witness)
+                    }
+                }
+                firstRoundOfFameUndecided[addr] = rofu
+            }
+        }
+
         knownConsensusEvents = len(distributedLedger.Node.ConsensusEvents)
         distributedLedger.Node.RWMutex.RUnlock()
     }

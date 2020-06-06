@@ -3,8 +3,8 @@ html, body {
     overflow: hidden;
     margin: 0;
 } 
-#canvas {
-    height: 100%;
+#konva-container {
+    /* height: 100%; */
 }
 
 #transactions {
@@ -26,12 +26,7 @@ html, body {
 }
 
 .visuals {
-    height: 90%;
+    height: 100%;
 }
-
-.controls {
-    height: 10%;
-}
-
 
 
