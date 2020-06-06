@@ -15,7 +15,7 @@ import (
 
 const (
 	verbose                    = 0    // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
-	randomTransactionCount     = 1024 // How many transactions to generate for each event
+	randomTransactionCount     = 512 // How many transactions to generate for each event
 	randomTransactionAmountMax = 500  // Maximum amount in a random transaction
 	randomTransactionAmountMin = 10   // Minimum amount in a random transaction
 )
