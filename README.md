@@ -1,9 +1,10 @@
 # Hashgraph in Go
+[![DOI](https://zenodo.org/badge/264742438.svg)](https://zenodo.org/badge/latestdoi/264742438)
 
 This is the course project for COMP515 - Distributed Systems. As a team of 2: [Erhan Tezcan](https://github.com/erhant) & [Ahmet Uysal](https://github.com/ahmetuysal), we implemented hashgraph in Golang.
 
 ## Disclaimer
-Hashgraph is a patented algorithm which is developed by Leemon Baird, the co-founder and CTO of Swirlds, in 2016. This project is developed solely for education purposes to better understand how Hashgraph works. 
+Hashgraph is a patented algorithm which is developed by Leemon Baird, the co-founder and CTO of Swirlds, in 2016. This project is developed solely for education purposes to better understand how Hashgraph works. You find the original papers we used for our implementation in our [report](report.pdf).
 
 ## How to run
 There are two applications located under [`cmd`](cmd) folder. 
