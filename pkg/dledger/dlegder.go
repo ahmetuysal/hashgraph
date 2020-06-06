@@ -20,6 +20,7 @@ const (
 	gossipWaitTime             = 0 * time.Millisecond   // the amount of time.sleep milliseconds between each random gossip
 	connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
 	printPerMrpcCall           = 250                    // After per this many RPC calls, print out evaluations
+	eventThreshold             = 5000                   // After this many events, print out evaluations
 )
 
 //DLedger : Struct for a member of the distributed ledger
@@ -137,12 +138,12 @@ func createEvaluationString(node *hashgraph.Node, rpcCallsSoFar int, startOfGoss
 	}
 
 	str := "\n#### EVAL ####" +
-		"\n\tGossip Runtime:" + strconv.FormatFloat(gossipDuration, 'f', 5, 64) + " (sec)" +
-		"\n\tGossip Count:" + strconv.Itoa(rpcCallsSoFar) +
+		"\n\tGossip Runtime: " + strconv.FormatFloat(gossipDuration, 'f', 5, 64) + " (sec)" +
+		"\n\tGossip Count: " + strconv.Itoa(rpcCallsSoFar) +
 		"\n\tAvg. Gossip/sec:" + strconv.FormatFloat(float64(rpcCallsSoFar)/gossipDuration, 'f', 5, 64) +
 		"\n\tAvg. Latency: " + strconv.FormatFloat(latencyAvg, 'f', 5, 64) + " (sec)" +
-		"\n\tNum. of Events : " + strconv.Itoa(numEvents) +
-		"\n\tNum. of Consensus Events : " + strconv.Itoa(len(node.ConsensusEvents)) +
+		"\n\tNum. of Events: " + strconv.Itoa(numEvents) +
+		"\n\tNum. of Consensus Events: " + strconv.Itoa(len(node.ConsensusEvents)) +
 		"\n#### EVAL ####\n"
 	return str
 
@@ -182,8 +183,10 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 			fmt.Println("entered gossip")
 		}
 
+		numEvents := 0
 		for addr := range node.Hashgraph {
 			knownEventNums[addr] = len(node.Hashgraph[addr])
+			numEvents += knownEventNums[addr]
 		}
 
 		if verbose == 4 {
@@ -195,6 +198,12 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 
 		if verbose == 2 {
 			fmt.Println("getting missing events")
+		}
+
+		if verbose == 3 && numEvents >= 5000 {
+			numEvents = 0 // so that this is not true all the time
+			evalString := createEvaluationString(node, c, startOfGossip)
+			fmt.Println(evalString)
 		}
 
 		// Ask the chosen peer how many events they do not know but I know
