@@ -163,6 +163,7 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 	// Start gossip
 	c := 0
 	startOfGossip := time.Now()
+	var err error
 	for {
 		// Choose a peer
 		randomPeerConnection := peerClientMap[peerAddresses[rand.Intn(len(peerAddresses))]] /* V2 */
@@ -201,7 +202,8 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 		//peerRPCconn, err := rpc.Dial("tcp", randomPeer)                                         /* V1 */
 		//handleError(err)                                                                        /* V1 */
 		//_ = peerRPCconn.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend) /* V1 */
-		_ = randomPeerConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend) /* V2 */
+		err = randomPeerConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend) /* V2 */
+		handleError(err)
 
 		if verbose == 2 {
 			fmt.Println("got missing events")
@@ -244,7 +246,8 @@ func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
 
 		//_ = peerRPCconn.Call("Node.SyncAllEvents", syncEventsDTO, nil) /* V1 */
 		//_ = peerRPCconn.Close()                                        /* V1 */
-		_ = randomPeerConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) /* V2 */
+		err = randomPeerConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) /* V2 */
+		handleError(err)
 
 		c++
 
