@@ -5,6 +5,7 @@ package hashgraph
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"sync"
 	"time"
@@ -13,7 +14,10 @@ import (
 )
 
 const (
-	verbose = 2 // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
+	verbose                    = 0   // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
+	randomTransactionCount     = 100 // How many transactions to generate for each event
+	randomTransactionAmountMax = 500 // Maximum amount in a random transaction
+	randomTransactionAmountMin = 10  // Minimum amount in a random transaction
 )
 
 //Node : A member of the distributed ledger system. Is identified by it's address.
@@ -68,6 +72,15 @@ func (n *Node) GetNumberOfMissingEvents(numEventsAlreadyKnown map[string]int, nu
 
 //SyncAllEvents : Node A first calls GetNumberOfMissingEvents on B, and then sends the missing events in this function
 func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
+	otherPeerAddresses := make([]string, len(n.Hashgraph)-1)
+	for addr := range n.Hashgraph {
+		if addr != n.Address {
+			otherPeerAddresses = append(otherPeerAddresses, addr)
+		}
+
+	}
+	transactions := n.GenerateTransactions(randomTransactionCount, randomTransactionAmountMax, randomTransactionAmountMin, otherPeerAddresses)
+
 	n.RWMutex.Lock()
 
 	if verbose == 1 {
@@ -108,7 +121,7 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 	}
 
 	// Store the transactions temporarily, and reset the global buffer
-	transactions := n.TransactionBuffer
+	transactions = append(transactions, n.TransactionBuffer...)
 	n.TransactionBuffer = nil
 
 	// Create random signature
@@ -524,8 +537,27 @@ func max(a, b uint32) uint32 {
 	return b
 }
 
+// todo: comment
 func isInitial(e *Event) bool {
 	return e.SelfParentHash == "" || e.OtherParentHash == ""
+}
+
+//GenerateTransactions : Generates an arbitrary amount of random transactions
+func (n *Node) GenerateTransactions(count int, max float64, min float64, peerAddress []string) []Transaction {
+	// Prepare transactions
+	transactions := make([]Transaction, count)
+	for i := 0; i < count; i++ {
+		randomPeerAddress := peerAddress[rand.Intn(len(peerAddress))]
+		randomAmount := min + rand.Float64()*(max-min)
+		transactions[i] = Transaction{
+			SenderAddress:   n.Address,
+			ReceiverAddress: randomPeerAddress,
+			Amount:          randomAmount,
+		}
+	}
+
+	return transactions
+
 }
 
 /** timeSlice interface for sorting **/
