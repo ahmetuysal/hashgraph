@@ -1,267 +1,334 @@
 package dledger
 
 import (
-    "bufio"
-    "fmt"
-    "math/rand"
-    "net"
-    "net/rpc"
-    "os"
-    "strings"
-    "time"
+	"bufio"
+	"fmt"
+	"math/rand"
+	"net"
+	"net/rpc"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
-    "../hashgraph"
-    uuid "github.com/satori/go.uuid"
+	"../hashgraph"
+	uuid "github.com/satori/go.uuid"
 )
 
 const (
-    verbose                    = 0                      // 1: prints within RPC, 2: prints within main, 3: timer on, off otherwise
-    gossipWaitTime             = 500 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
-    connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
+	verbose                    = 3                      // 1: prints within RPC, 2: prints within main, 3: evaluation, off otherwise
+	gossipWaitTime             = 1 * time.Millisecond   // the amount of time.sleep milliseconds between each random gossip
+	connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
+	printPerMrpcCall           = 100                    // After per this many RPC calls, print out evaluations
 )
 
 //DLedger : Struct for a member of the distributed ledger
 type DLedger struct {
-    Node           *hashgraph.Node
-    MyAddress      string
-    PeerAddresses  []string
-    PeerAddressMap map[string]string
+	Node           *hashgraph.Node
+	MyAddress      string
+	PeerAddresses  []string
+	PeerAddressMap map[string]string
 }
 
 func NewDLedgerFromPeers(port string, peerAddressMap map[string]string) *DLedger {
-    localIPAddress := getLocalAddress()
-    myAddress := localIPAddress + ":" + port
-    // Assert that your own address is on the peers file
-    _, ok := peerAddressMap[myAddress]
-    if !ok {
-        panic("Peers file does not include my address: " + myAddress)
-    }
+	localIPAddress := getLocalAddress()
+	myAddress := localIPAddress + ":" + port
+	// Assert that your own address is on the peers file
+	_, ok := peerAddressMap[myAddress]
+	if !ok {
+		panic("Peers file does not include my address: " + myAddress)
+	}
 
-    // Copy peer addresses to a slice for random access during gossip
-    peerAddresses := make([]string, len(peerAddressMap)-1)
-    i := 0
-    for k := range peerAddressMap {
-        if k != myAddress {
-            peerAddresses[i] = k // suggestion #1: do not add my own ip:port here, instead of creating another slice without me later
-            i++
-        }
-    }
+	// Copy peer addresses to a slice for random access during gossip
+	peerAddresses := make([]string, len(peerAddressMap)-1)
+	i := 0
+	for k := range peerAddressMap {
+		if k != myAddress {
+			peerAddresses[i] = k // suggestion #1: do not add my own ip:port here, instead of creating another slice without me later
+			i++
+		}
+	}
 
-    // Setup the Hashgraph
-    signatureUUID, err := uuid.NewV4()
-    handleError(err)
-    signature := signatureUUID.String()
-    handleError(err)
-    initialHashgraph := make(map[string][]*hashgraph.Event, len(peerAddressMap))
-    for addr := range peerAddressMap {
-        initialHashgraph[addr] = make([]*hashgraph.Event, 0) // We should not know any event other than our own event at the start
-    }
-    initialEvent := hashgraph.Event{
-        Owner:              myAddress,
-        Signature:          signature, // todo: use RSA
-        SelfParentHash:     "",
-        OtherParentHash:    "",
-        Timestamp:          time.Now(),
-        Transactions:       nil,
-        Round:              1,
-        IsWitness:          true, // true because the initial event is the first event of its round
-        IsFamous:           false,
-        RoundReceived:      0,
-        ConsensusTimestamp: time.Unix(0, 0),
-    }
-    initialHashgraph[myAddress] = append(initialHashgraph[myAddress], &initialEvent)
-    myNode := hashgraph.NewNode(initialHashgraph, myAddress)
+	// Setup the Hashgraph
+	signatureUUID, err := uuid.NewV4()
+	handleError(err)
+	signature := signatureUUID.String()
+	handleError(err)
+	initialHashgraph := make(map[string][]*hashgraph.Event, len(peerAddressMap))
+	for addr := range peerAddressMap {
+		initialHashgraph[addr] = make([]*hashgraph.Event, 0) // We should not know any event other than our own event at the start
+	}
+	initialEvent := hashgraph.Event{
+		Owner:              myAddress,
+		Signature:          signature, // todo: use RSA
+		SelfParentHash:     "",
+		OtherParentHash:    "",
+		Timestamp:          time.Now(),
+		Transactions:       nil,
+		Round:              1,
+		IsWitness:          true, // true because the initial event is the first event of its round
+		IsFamous:           false,
+		RoundReceived:      0,
+		ConsensusTimestamp: time.Unix(0, 0),
+	}
+	initialHashgraph[myAddress] = append(initialHashgraph[myAddress], &initialEvent)
+	myNode := hashgraph.NewNode(initialHashgraph, myAddress)
 
-    for addr := range myNode.Hashgraph {
-        myNode.Witnesses[addr] = make(map[uint32]*hashgraph.Event)
-    }
-    myNode.Witnesses[initialEvent.Owner][1] = &initialEvent
-    myNode.Events[initialEvent.Signature] = &initialEvent
-    myNode.FirstRoundOfFameUndecided[initialEvent.Owner] = 1
-    myNode.FirstEventOfNotConsensusIndex[initialEvent.Owner] = 0 // index 0 for the initial event
+	for addr := range myNode.Hashgraph {
+		myNode.Witnesses[addr] = make(map[uint32]*hashgraph.Event)
+	}
+	myNode.Witnesses[initialEvent.Owner][1] = &initialEvent
+	myNode.Events[initialEvent.Signature] = &initialEvent
+	myNode.FirstRoundOfFameUndecided[initialEvent.Owner] = 1
+	myNode.FirstEventOfNotConsensusIndex[initialEvent.Owner] = 0 // index 0 for the initial event
 
-    // Setup the server
-    _ = rpc.Register(myNode)
-    tcpAddr, _ := net.ResolveTCPAddr("tcp", myAddress)
-    listener, _ := net.ListenTCP("tcp", tcpAddr)
-    go listenForRPCConnections(listener)
+	// Setup the server
+	_ = rpc.Register(myNode)
+	tcpAddr, _ := net.ResolveTCPAddr("tcp", myAddress)
+	listener, _ := net.ListenTCP("tcp", tcpAddr)
+	go listenForRPCConnections(listener)
 
-    return &DLedger{
-        Node:           myNode,
-        MyAddress:      myAddress,
-        PeerAddresses:  peerAddresses,
-        PeerAddressMap: peerAddressMap,
-    }
+	return &DLedger{
+		Node:           myNode,
+		MyAddress:      myAddress,
+		PeerAddresses:  peerAddresses,
+		PeerAddressMap: peerAddressMap,
+	}
 }
 
 //NewDLedger : Initialize a member in the distributed ledger.
 // This is not adding a new member, but rather reading a member from a list and initializing it.
 func NewDLedger(port string, peersFilePath string) *DLedger {
-    localIPAddress := getLocalAddress()
-    peerAddressMap := readPeerAddresses(peersFilePath, localIPAddress)
-    return NewDLedgerFromPeers(port, peerAddressMap)
-}
-
-// Read the node addresses and names, return a map from addresses to names
-func readPeerAddresses(path string, localIPAddr string) map[string]string {
-    file, err := os.Open(path)
-    handleError(err)
-    defer func() {
-        handleError(file.Close())
-    }()
-
-    // Addr to name map
-    peers := make(map[string]string)
-    scanner := bufio.NewScanner(file)
-    for scanner.Scan() {
-        addrName := strings.Split(scanner.Text(), " ")
-        peers[strings.Replace(addrName[0], "localhost", localIPAddr, 1)] = addrName[1]
-    }
-    return peers
+	localIPAddress := getLocalAddress()
+	peerAddressMap := readPeerAddresses(peersFilePath, localIPAddress)
+	return NewDLedgerFromPeers(port, peerAddressMap)
 }
 
 //Start : Starts the gossip routine in a go routine.
 func (dl *DLedger) Start() {
-    go gossipRoutine(dl.Node, dl.PeerAddresses)
+	go gossipRoutine(dl.Node, dl.PeerAddresses)
 }
 
 //PerformTransaction : Adds a transaction to the member's buffer.
 func (dl *DLedger) PerformTransaction(receiverAddr string, amount float64) {
-    dl.Node.RWMutex.Lock()
-    dl.Node.TransactionBuffer = append(dl.Node.TransactionBuffer, hashgraph.Transaction{
-        SenderAddress:   dl.MyAddress,
-        ReceiverAddress: receiverAddr,
-        Amount:          amount,
-    })
-    dl.Node.RWMutex.Unlock()
+	dl.Node.RWMutex.Lock()
+	dl.Node.TransactionBuffer = append(dl.Node.TransactionBuffer, hashgraph.Transaction{
+		SenderAddress:   dl.MyAddress,
+		ReceiverAddress: receiverAddr,
+		Amount:          amount,
+	})
+	dl.Node.RWMutex.Unlock()
 }
 
-//WaitForPeers : Waits for all members in the member list to be online and responsive.
-func (dl *DLedger) WaitForPeers() {
-    peerAvailable := make([]bool, len(dl.PeerAddresses))
-    remainingPeers := len(dl.PeerAddresses)
-    for remainingPeers > 0 {
-        for index, hasAlreadyResponded := range peerAvailable {
-            // we have already reached this peer
-            if hasAlreadyResponded {
-                continue
-            }
+func createEvaluationString(node *hashgraph.Node, rpcCallsSoFar int, startOfGossip time.Time) string {
+	// How long have I been gossipping
+	gossipDuration := float64(time.Now().Sub(startOfGossip).Milliseconds()) / 1000.0
 
-            rpcConnection, err := rpc.Dial("tcp", dl.PeerAddresses[index])
-            if err != nil {
-                time.Sleep(connectionAttemptDelayTime)
-                continue
-            } else {
-                _ = rpcConnection.Close()
-                peerAvailable[index] = true
-                remainingPeers--
-            }
-        }
-    }
+	// What is the average latency among them
+	latencyTotal := int64(0)
+	for _, e := range node.ConsensusEvents {
+		latencyTotal += e.Latency.Milliseconds()
+	}
+	latencyAvg := (float64(latencyTotal) / float64(len(node.ConsensusEvents))) / 1000.0 // convert to secs
+
+	// How many events are there in total
+	numEvents := 0
+	for addr := range node.Hashgraph {
+		numEvents += len(node.Hashgraph[addr])
+	}
+
+	str := "\n#### EVAL ####" +
+		"\n\tGossip Runtime:" + strconv.FormatFloat(gossipDuration, 'f', 5, 64) + " (sec)" +
+		"\n\tGossip Count:" + strconv.Itoa(rpcCallsSoFar) +
+		"\n\tAvg. Gossip/sec:" + strconv.FormatFloat(gossipDuration, 'f', 5, 64) +
+		"\n\tAvg. Latency: " + strconv.FormatFloat(latencyAvg, 'f', 5, 64) + " (sec)" +
+		"\n\tNum. of Events : " + strconv.Itoa(numEvents) +
+		"\n\tNum. of Consensus Events : " + strconv.Itoa(len(node.ConsensusEvents)) +
+		"\n#### EVAL ####\n"
+	return str
+
 }
 
 // Infinite loop of gossip routine, each gossip delayed by a constant time.
 func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
-    //var t1 time.Time
-    //var t2 time.Duration
-    //var c int
-    for {
-        // Choose a peer
-        randomPeer := peerAddresses[rand.Intn(len(peerAddresses))]
+	// Get RPC clients /* V2 all together */
 
-        // Calculate how many events I know
-        knownEventNums := make(map[string]int, len(node.Hashgraph))
-        node.RWMutex.RLock()
-        for addr := range node.Hashgraph {
-            knownEventNums[addr] = len(node.Hashgraph[addr])
-        }
+	peerClientMap := make(map[string]*rpc.Client, len(peerAddresses))
+	for _, addr := range peerAddresses {
+		peerRPCConnection, err := rpc.Dial("tcp", addr)
+		defer peerRPCConnection.Close()
+		handleError(err)
+		peerClientMap[addr] = peerRPCConnection
+	}
 
-        if verbose == 2 {
-            fmt.Print("Known Events:\n")
-            for addr, num := range knownEventNums {
-                fmt.Printf("\t%s : %d\n", addr, num)
-            }
-        }
+	// Start gossip
+	c := 0
+	startOfGossip := time.Now()
+	for {
+		// Choose a peer
+		randomPeerConnection := peerClientMap[peerAddresses[rand.Intn(len(peerAddresses))]] /* V2 */
+		//randomPeer := peerAddresses[rand.Intn(len(peerAddresses))] /* V1 */
 
-        // Ask the chosen peer how many events they do not know but I know
-        peerRPCConnection, err := rpc.Dial("tcp", randomPeer)
-        handleError(err)
-        numEventsToSend := make(map[string]int, len(node.Hashgraph))
-        _ = peerRPCConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend)
+		// Calculate how many events I know
+		knownEventNums := make(map[string]int, len(node.Hashgraph))
 
-        if verbose == 2 {
-            fmt.Print("Events to send:\n")
-            for addr, num := range numEventsToSend {
-                fmt.Printf("\t%s : %d\n", addr, num)
-            }
-        }
+		if verbose == 2 {
+			fmt.Println("entering gossip")
+		}
 
-        // Send the missing events
-        missingEvents := make(map[string][]*hashgraph.Event, len(numEventsToSend))
-        for addr := range numEventsToSend {
-            if numEventsToSend[addr] > 0 { /* it is possible for this to be negative, but that is ok, it just means the peer knows stuff I do not, which I will eventually learn via gossip */
-                totalNumEvents := len(node.Hashgraph[addr])
-                for _, event := range node.Hashgraph[addr][totalNumEvents-numEventsToSend[addr]:] {
-                    missingEvents[addr] = append(missingEvents[addr], event)
-                }
-            }
-        }
+		node.RWMutex.RLock()
 
-        // Wrap the missing events in a struct for rpc, attach my own address here
-        syncEventsDTO := hashgraph.SyncEventsDTO{
-            SenderAddress: node.Address,
-            MissingEvents: missingEvents,
-        }
+		if verbose == 2 {
+			fmt.Println("entered gossip")
+		}
 
-        if verbose == 2 {
-            fmt.Println("remotely calling SyncAllEvents")
-        }
+		for addr := range node.Hashgraph {
+			knownEventNums[addr] = len(node.Hashgraph[addr])
+		}
 
-        //t1 = time.Now()
-        _ = peerRPCConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) // todo: one peer gets stuck here
-        _ = peerRPCConnection.Close()
-        node.RWMutex.RUnlock()
-        //t2 = time.Since(t1)
-        //c++
+		if verbose == 4 {
+			fmt.Print("Known Events:\n")
+			for addr, num := range knownEventNums {
+				fmt.Printf("\t%s : %d\n", addr, num)
+			}
+		}
 
-        //if verbose == 3 {
-        //	fmt.Printf("RPC call %d took %d (micro sec)\n", c, t2.Microseconds())
-        //}
+		if verbose == 2 {
+			fmt.Println("getting missing events")
+		}
 
-        if verbose == 2 {
-            fmt.Println("exiting remote call to SyncAllEvents")
-        }
+		// Ask the chosen peer how many events they do not know but I know
+		numEventsToSend := make(map[string]int, len(node.Hashgraph))
+		//peerRPCconn, err := rpc.Dial("tcp", randomPeer)                                         /* V1 */
+		//handleError(err)                                                                        /* V1 */
+		//_ = peerRPCconn.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend) /* V1 */
+		_ = randomPeerConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend) /* V2 */
 
-        time.Sleep(gossipWaitTime)
+		if verbose == 2 {
+			fmt.Println("got missing events")
+		}
 
-    }
+		if verbose == 4 {
+			fmt.Print("Events to send:\n")
+			for addr, num := range numEventsToSend {
+				fmt.Printf("\t%s : %d\n", addr, num)
+			}
+		}
+
+		// Send the missing events
+		missingEvents := make(map[string][]*hashgraph.Event, len(node.Hashgraph))
+		for addr := range numEventsToSend {
+			if numEventsToSend[addr] > 0 { /* it is possible for this to be negative, but that is ok, it just means the peer knows stuff I do not, which I will eventually learn via gossip */
+				totalNumEvents := knownEventNums[addr]
+				for _, event := range node.Hashgraph[addr][totalNumEvents-numEventsToSend[addr]:] {
+					missingEvents[addr] = append(missingEvents[addr], event)
+				}
+			}
+		}
+
+		// Wrap the missing events in a struct for rpc, attach my own address here
+		syncEventsDTO := hashgraph.SyncEventsDTO{
+			SenderAddress: node.Address,
+			MissingEvents: missingEvents,
+		}
+
+		if verbose == 2 {
+			fmt.Println("remotely calling SyncAllEvents")
+		}
+
+		if verbose == 3 && c%printPerMrpcCall == 0 {
+			evalString := createEvaluationString(node, c, startOfGossip)
+			fmt.Println(evalString)
+		}
+
+		node.RWMutex.RUnlock()
+
+		//_ = peerRPCconn.Call("Node.SyncAllEvents", syncEventsDTO, nil) /* V1 */
+		//_ = peerRPCconn.Close()                                        /* V1 */
+		_ = randomPeerConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) /* V2 */
+
+		c++
+
+		if verbose == 2 {
+			fmt.Println("exiting remote call to SyncAllEvents")
+		}
+
+		if verbose == 2 {
+			fmt.Println("finished gossip")
+		}
+
+		time.Sleep(gossipWaitTime)
+
+	}
+}
+
+// Read the node addresses and names, return a map from addresses to names
+func readPeerAddresses(path string, localIPAddr string) map[string]string {
+	file, err := os.Open(path)
+	handleError(err)
+	defer func() {
+		handleError(file.Close())
+	}()
+
+	// Addr to name map
+	peers := make(map[string]string)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		addrName := strings.Split(scanner.Text(), " ")
+		peers[strings.Replace(addrName[0], "localhost", localIPAddr, 1)] = addrName[1]
+	}
+	return peers
+}
+
+//WaitForPeers : Waits for all members in the member list to be online and responsive.
+func (dl *DLedger) WaitForPeers() {
+	peerAvailable := make([]bool, len(dl.PeerAddresses))
+	remainingPeers := len(dl.PeerAddresses)
+	for remainingPeers > 0 {
+		for index, hasAlreadyResponded := range peerAvailable {
+			// we have already reached this peer
+			if hasAlreadyResponded {
+				continue
+			}
+
+			rpcConnection, err := rpc.Dial("tcp", dl.PeerAddresses[index])
+			if err != nil {
+				time.Sleep(connectionAttemptDelayTime)
+				continue
+			} else {
+				_ = rpcConnection.Close()
+				peerAvailable[index] = true
+				remainingPeers--
+			}
+		}
+	}
 }
 
 // Serves RPC calls in a go routine
 func listenForRPCConnections(listener *net.TCPListener) {
-    for {
-        conn, err := listener.Accept()
-        if err != nil {
-            continue
-        }
-        rpc.ServeConn(conn)
-    }
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			continue
+		}
+		go rpc.ServeConn(conn)
+	}
 }
 
 // Returns the local address of this device
 func getLocalAddress() string {
-    conn, err := net.Dial("udp", "eng.ku.edu.tr:80")
-    handleError(err)
-    defer func() {
-        handleError(conn.Close())
-    }()
-    localAddr := conn.LocalAddr().(*net.UDPAddr)
-    return localAddr.IP.String()
+	conn, err := net.Dial("udp", "eng.ku.edu.tr:80")
+	handleError(err)
+	defer func() {
+		handleError(conn.Close())
+	}()
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
 }
 
 // Auxiliary for any error
 func handleError(e error) {
-    if e != nil {
-        panic(e)
-    }
+	if e != nil {
+		panic(e)
+	}
 }
