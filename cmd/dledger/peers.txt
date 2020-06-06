@@ -1,4 +1,3 @@
-localhost:8080 Alice
-localhost:9090 Bob
-localhost:7070 Carol
-localhost:6060 Dave
+localhost:7070 Alice
+localhost:8080 Bob
+localhost:9090 Carol

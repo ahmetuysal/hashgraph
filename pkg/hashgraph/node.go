@@ -5,6 +5,7 @@ package hashgraph
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"sort"
 	"sync"
 	"time"
@@ -13,8 +14,10 @@ import (
 )
 
 const (
-	verbose           = 3  // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
-	signatureByteSize = 64 // Number of bytes for the signature
+	verbose                    = 0   // 1: full, 2: necessary prints, 3: timers. Use for debugging, default to 0
+	randomTransactionCount     = 0   // How many transactions to generate for each event
+	randomTransactionAmountMax = 500 // Maximum amount in a random transaction
+	randomTransactionAmountMin = 10  // Minimum amount in a random transaction
 )
 
 //Node : A member of the distributed ledger system. Is identified by it's address.
@@ -70,6 +73,14 @@ func (n *Node) GetNumberOfMissingEvents(numEventsAlreadyKnown map[string]int, nu
 //SyncAllEvents : Node A first calls GetNumberOfMissingEvents on B, and then sends the missing events in this function
 func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 	n.RWMutex.Lock()
+	otherPeerAddresses := make([]string, len(n.Hashgraph)-1)
+	for addr := range n.Hashgraph {
+		if addr != n.Address {
+			otherPeerAddresses = append(otherPeerAddresses, addr)
+		}
+
+	}
+	transactions := n.GenerateTransactions(randomTransactionCount, randomTransactionAmountMax, randomTransactionAmountMin, otherPeerAddresses)
 
 	if verbose == 1 {
 		fmt.Printf("Syncing nodes %s and %s...\n", events.SenderAddress, n.Address)
@@ -87,13 +98,14 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 			if verbose == 1 {
 				fmt.Printf("Adding missing event %s\n", missingEvent.Signature)
 			}
-
-			n.Hashgraph[addr] = append(n.Hashgraph[addr], missingEvent)
-			n.Events[missingEvent.Signature] = missingEvent
-			if missingEvent.IsWitness {
-				n.Witnesses[missingEvent.Owner][missingEvent.Round] = missingEvent
+			_, ok := n.Events[missingEvent.Signature]
+			if !ok {
+				n.Hashgraph[addr] = append(n.Hashgraph[addr], missingEvent)
+				n.Events[missingEvent.Signature] = missingEvent
+				if missingEvent.IsWitness {
+					n.Witnesses[missingEvent.Owner][missingEvent.Round] = missingEvent
+				}
 			}
-
 		}
 	}
 
@@ -109,7 +121,7 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 	}
 
 	// Store the transactions temporarily, and reset the global buffer
-	transactions := n.TransactionBuffer
+	transactions = append(transactions, n.TransactionBuffer...)
 	n.TransactionBuffer = nil
 
 	// Create random signature
@@ -153,7 +165,7 @@ func (n *Node) SyncAllEvents(events SyncEventsDTO, success *bool) error {
 		fmt.Printf("\n\tDivideRounds took %v\n", t2.Sub(t1))
 	}
 	if verbose == 2 {
-		fmt.Printf("\t\tNew event round: %d\n", newEvent.Round)
+		fmt.Printf("\tNew event round: %d with %d transactions\n", newEvent.Round, len(newEvent.Transactions))
 	}
 	if verbose == 1 {
 		fmt.Println("exiting DivideRounds\nentering DecideFame")
@@ -263,7 +275,7 @@ func (n *Node) DecideFame() {
 	// Get the last witnesses that does not have a decided fame
 	var fameUndecidedWitnesses []*Event // this is "for each x" in the paper
 	for addr := range n.Hashgraph {
-		for round, witness := range n.Witnesses[addr] { // todo: optimize the access
+		for round, witness := range n.Witnesses[addr] {
 			if round >= n.FirstRoundOfFameUndecided[addr] {
 				fameUndecidedWitnesses = append(fameUndecidedWitnesses, witness)
 			}
@@ -274,7 +286,7 @@ func (n *Node) DecideFame() {
 		// Get all witnesses that have greater rounds
 		var witnessesWithGreaterRounds []*Event
 		for addr := range n.Hashgraph {
-			for round, witness := range n.Witnesses[addr] { // todo: optimize the access
+			for round, witness := range n.Witnesses[addr] {
 				if round > e.Round {
 					witnessesWithGreaterRounds = append(witnessesWithGreaterRounds, witness)
 				}
@@ -376,6 +388,7 @@ func (n *Node) FindOrder() {
 					sort.Stable(timestamps) // returns timestamps sorted in increasing order
 					medianTimestamp := timestamps[int(math.Floor(float64(len(timestamps))/2.0))]
 					e.ConsensusTimestamp = medianTimestamp
+					e.Latency = time.Now().Sub(e.Timestamp) // Event's timestamp was set during it's creation
 					n.ConsensusEvents = append(n.ConsensusEvents, e)
 					n.FirstEventOfNotConsensusIndex[e.Owner]++ // !
 				}
@@ -391,6 +404,11 @@ func (n *Node) FindOrder() {
 
 // If we can reach to target using downward edges only, we can see it. Downward in this case means that we reach through either parent. This function is used for voting
 func (n *Node) see(current *Event, target *Event) bool {
+	if verbose == 1 && current == nil {
+		fmt.Printf("NIL GELIYORUM LANNNNNNNNNNNNNNNNNNNN\n")
+
+	}
+
 	dpMap, ok := n.seeDPMemory[current.Signature]
 
 	if !ok {
@@ -412,6 +430,15 @@ func (n *Node) see(current *Event, target *Event) bool {
 		dpMap[target.Signature] = false
 		return false
 	}
+	/* SPONGE >>>
+	selfParent, ok := n.Events[current.SelfParentHash]
+	otherParent, ok := n.Events[current.OtherParentHash]
+	if selfParent == nil || otherParent == nil {
+		fmt.Printf("%+v\n", current)
+
+	}
+	SPONGE <<< */
+
 	result := n.see(n.Events[current.SelfParentHash], target) || n.see(n.Events[current.OtherParentHash], target)
 	dpMap[target.Signature] = result
 	return result
@@ -524,8 +551,27 @@ func max(a, b uint32) uint32 {
 	return b
 }
 
+// todo: comment
 func isInitial(e *Event) bool {
 	return e.SelfParentHash == "" || e.OtherParentHash == ""
+}
+
+//GenerateTransactions : Generates an arbitrary amount of random transactions
+func (n *Node) GenerateTransactions(count int, max float64, min float64, peerAddress []string) []Transaction {
+	// Prepare transactions
+	transactions := make([]Transaction, count)
+	for i := 0; i < count; i++ {
+		randomPeerAddress := peerAddress[rand.Intn(len(peerAddress))]
+		randomAmount := min + rand.Float64()*(max-min)
+		transactions[i] = Transaction{
+			SenderAddress:   n.Address,
+			ReceiverAddress: randomPeerAddress,
+			Amount:          randomAmount,
+		}
+	}
+
+	return transactions
+
 }
 
 /** timeSlice interface for sorting **/

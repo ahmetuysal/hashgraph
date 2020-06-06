@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/rpc"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,9 +16,10 @@ import (
 )
 
 const (
-	verbose                    = 3                      // 1: prints within RPC, 2: prints within main, 3: timer on, off otherwise
-	gossipWaitTime             = 500 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
+	verbose                    = 3                      // 1: prints within RPC, 2: prints within main, 3: evaluation, off otherwise
+	gossipWaitTime             = 1 * time.Millisecond   // the amount of time.sleep milliseconds between each random gossip
 	connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
+	printPerMrpcCall           = 100                    // After per this many RPC calls, print out evaluations
 )
 
 //DLedger : Struct for a member of the distributed ledger
@@ -101,6 +103,164 @@ func NewDLedger(port string, peersFilePath string) *DLedger {
 	}
 }
 
+//Start : Starts the gossip routine in a go routine.
+func (dl *DLedger) Start() {
+	go gossipRoutine(dl.Node, dl.PeerAddresses)
+}
+
+//PerformTransaction : Adds a transaction to the member's buffer.
+func (dl *DLedger) PerformTransaction(receiverAddr string, amount float64) {
+	dl.Node.RWMutex.Lock()
+	dl.Node.TransactionBuffer = append(dl.Node.TransactionBuffer, hashgraph.Transaction{
+		SenderAddress:   dl.MyAddress,
+		ReceiverAddress: receiverAddr,
+		Amount:          amount,
+	})
+	dl.Node.RWMutex.Unlock()
+}
+
+func createEvaluationString(node *hashgraph.Node, rpcCallsSoFar int, startOfGossip time.Time) string {
+	// How long have I been gossipping
+	gossipDuration := float64(time.Now().Sub(startOfGossip).Milliseconds()) / 1000.0
+
+	// What is the average latency among them
+	latencyTotal := int64(0)
+	for _, e := range node.ConsensusEvents {
+		latencyTotal += e.Latency.Milliseconds()
+	}
+	latencyAvg := (float64(latencyTotal) / float64(len(node.ConsensusEvents))) / 1000.0 // convert to secs
+
+	// How many events are there in total
+	numEvents := 0
+	for addr := range node.Hashgraph {
+		numEvents += len(node.Hashgraph[addr])
+	}
+
+	str := "\n#### EVAL ####" +
+		"\n\tGossip Runtime:" + strconv.FormatFloat(gossipDuration, 'f', 5, 64) + " (sec)" +
+		"\n\tGossip Count:" + strconv.Itoa(rpcCallsSoFar) +
+		"\n\tAvg. Gossip/sec:" + strconv.FormatFloat(gossipDuration, 'f', 5, 64) +
+		"\n\tAvg. Latency: " + strconv.FormatFloat(latencyAvg, 'f', 5, 64) + " (sec)" +
+		"\n\tNum. of Events : " + strconv.Itoa(numEvents) +
+		"\n\tNum. of Consensus Events : " + strconv.Itoa(len(node.ConsensusEvents)) +
+		"\n#### EVAL ####\n"
+	return str
+
+}
+
+// Infinite loop of gossip routine, each gossip delayed by a constant time.
+func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
+	// Get RPC clients /* V2 all together */
+
+	peerClientMap := make(map[string]*rpc.Client, len(peerAddresses))
+	for _, addr := range peerAddresses {
+		peerRPCConnection, err := rpc.Dial("tcp", addr)
+		defer peerRPCConnection.Close()
+		handleError(err)
+		peerClientMap[addr] = peerRPCConnection
+	}
+
+	// Start gossip
+	c := 0
+	startOfGossip := time.Now()
+	for {
+		// Choose a peer
+		randomPeerConnection := peerClientMap[peerAddresses[rand.Intn(len(peerAddresses))]] /* V2 */
+		//randomPeer := peerAddresses[rand.Intn(len(peerAddresses))] /* V1 */
+
+		// Calculate how many events I know
+		knownEventNums := make(map[string]int, len(node.Hashgraph))
+
+		if verbose == 2 {
+			fmt.Println("entering gossip")
+		}
+
+		node.RWMutex.RLock()
+
+		if verbose == 2 {
+			fmt.Println("entered gossip")
+		}
+
+		for addr := range node.Hashgraph {
+			knownEventNums[addr] = len(node.Hashgraph[addr])
+		}
+
+		if verbose == 4 {
+			fmt.Print("Known Events:\n")
+			for addr, num := range knownEventNums {
+				fmt.Printf("\t%s : %d\n", addr, num)
+			}
+		}
+
+		if verbose == 2 {
+			fmt.Println("getting missing events")
+		}
+
+		// Ask the chosen peer how many events they do not know but I know
+		numEventsToSend := make(map[string]int, len(node.Hashgraph))
+		//peerRPCconn, err := rpc.Dial("tcp", randomPeer)                                         /* V1 */
+		//handleError(err)                                                                        /* V1 */
+		//_ = peerRPCconn.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend) /* V1 */
+		_ = randomPeerConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend) /* V2 */
+
+		if verbose == 2 {
+			fmt.Println("got missing events")
+		}
+
+		if verbose == 4 {
+			fmt.Print("Events to send:\n")
+			for addr, num := range numEventsToSend {
+				fmt.Printf("\t%s : %d\n", addr, num)
+			}
+		}
+
+		// Send the missing events
+		missingEvents := make(map[string][]*hashgraph.Event, len(node.Hashgraph))
+		for addr := range numEventsToSend {
+			if numEventsToSend[addr] > 0 { /* it is possible for this to be negative, but that is ok, it just means the peer knows stuff I do not, which I will eventually learn via gossip */
+				totalNumEvents := knownEventNums[addr]
+				for _, event := range node.Hashgraph[addr][totalNumEvents-numEventsToSend[addr]:] {
+					missingEvents[addr] = append(missingEvents[addr], event)
+				}
+			}
+		}
+
+		// Wrap the missing events in a struct for rpc, attach my own address here
+		syncEventsDTO := hashgraph.SyncEventsDTO{
+			SenderAddress: node.Address,
+			MissingEvents: missingEvents,
+		}
+
+		if verbose == 2 {
+			fmt.Println("remotely calling SyncAllEvents")
+		}
+
+		if verbose == 3 && c%printPerMrpcCall == 0 {
+			evalString := createEvaluationString(node, c, startOfGossip)
+			fmt.Println(evalString)
+		}
+
+		node.RWMutex.RUnlock()
+
+		//_ = peerRPCconn.Call("Node.SyncAllEvents", syncEventsDTO, nil) /* V1 */
+		//_ = peerRPCconn.Close()                                        /* V1 */
+		_ = randomPeerConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) /* V2 */
+
+		c++
+
+		if verbose == 2 {
+			fmt.Println("exiting remote call to SyncAllEvents")
+		}
+
+		if verbose == 2 {
+			fmt.Println("finished gossip")
+		}
+
+		time.Sleep(gossipWaitTime)
+
+	}
+}
+
 // Read the node addresses and names, return a map from addresses to names
 func readPeerAddresses(path string, localIPAddr string) map[string]string {
 	file, err := os.Open(path)
@@ -117,22 +277,6 @@ func readPeerAddresses(path string, localIPAddr string) map[string]string {
 		peers[strings.Replace(addrName[0], "localhost", localIPAddr, 1)] = addrName[1]
 	}
 	return peers
-}
-
-//Start : Starts the gossip routine in a go routine.
-func (dl *DLedger) Start() {
-	go gossipRoutine(dl.Node, dl.PeerAddresses)
-}
-
-//PerformTransaction : Adds a transaction to the member's buffer.
-func (dl *DLedger) PerformTransaction(receiverAddr string, amount float64) {
-	dl.Node.RWMutex.Lock()
-	dl.Node.TransactionBuffer = append(dl.Node.TransactionBuffer, hashgraph.Transaction{
-		SenderAddress:   dl.MyAddress,
-		ReceiverAddress: receiverAddr,
-		Amount:          amount,
-	})
-	dl.Node.RWMutex.Unlock()
 }
 
 //WaitForPeers : Waits for all members in the member list to be online and responsive.
@@ -159,83 +303,6 @@ func (dl *DLedger) WaitForPeers() {
 	}
 }
 
-// Infinite loop of gossip routine, each gossip delayed by a constant time.
-func gossipRoutine(node *hashgraph.Node, peerAddresses []string) {
-	//var t1 time.Time
-	//var t2 time.Duration
-	//var c int
-	for {
-		// Choose a peer
-		randomPeer := peerAddresses[rand.Intn(len(peerAddresses))]
-
-		// Calculate how many events I know
-		knownEventNums := make(map[string]int, len(node.Hashgraph))
-		node.RWMutex.RLock()
-		for addr := range node.Hashgraph {
-			knownEventNums[addr] = len(node.Hashgraph[addr])
-		}
-
-		if verbose == 2 {
-			fmt.Print("Known Events:\n")
-			for addr, num := range knownEventNums {
-				fmt.Printf("\t%s : %d\n", addr, num)
-			}
-		}
-
-		// Ask the chosen peer how many events they do not know but I know
-		peerRPCConnection, err := rpc.Dial("tcp", randomPeer)
-		handleError(err)
-		numEventsToSend := make(map[string]int, len(node.Hashgraph))
-		_ = peerRPCConnection.Call("Node.GetNumberOfMissingEvents", knownEventNums, &numEventsToSend)
-
-		if verbose == 2 {
-			fmt.Print("Events to send:\n")
-			for addr, num := range numEventsToSend {
-				fmt.Printf("\t%s : %d\n", addr, num)
-			}
-		}
-
-		// Send the missing events
-		missingEvents := make(map[string][]*hashgraph.Event, len(numEventsToSend))
-		for addr := range numEventsToSend {
-			if numEventsToSend[addr] > 0 { /* it is possible for this to be negative, but that is ok, it just means the peer knows stuff I do not, which I will eventually learn via gossip */
-				totalNumEvents := len(node.Hashgraph[addr])
-				for _, event := range node.Hashgraph[addr][totalNumEvents-numEventsToSend[addr]:] {
-					missingEvents[addr] = append(missingEvents[addr], event)
-				}
-			}
-		}
-
-		// Wrap the missing events in a struct for rpc, attach my own address here
-		syncEventsDTO := hashgraph.SyncEventsDTO{
-			SenderAddress: node.Address,
-			MissingEvents: missingEvents,
-		}
-
-		if verbose == 2 {
-			fmt.Println("remotely calling SyncAllEvents")
-		}
-
-		//t1 = time.Now()
-		_ = peerRPCConnection.Call("Node.SyncAllEvents", syncEventsDTO, nil) // todo: one peer gets stuck here
-		_ = peerRPCConnection.Close()
-		node.RWMutex.RUnlock()
-		//t2 = time.Since(t1)
-		//c++
-
-		//if verbose == 3 {
-		//	fmt.Printf("RPC call %d took %d (micro sec)\n", c, t2.Microseconds())
-		//}
-
-		if verbose == 2 {
-			fmt.Println("exiting remote call to SyncAllEvents")
-		}
-
-		time.Sleep(gossipWaitTime)
-
-	}
-}
-
 // Serves RPC calls in a go routine
 func listenForRPCConnections(listener *net.TCPListener) {
 	for {
@@ -243,7 +310,7 @@ func listenForRPCConnections(listener *net.TCPListener) {
 		if err != nil {
 			continue
 		}
-		rpc.ServeConn(conn)
+		go rpc.ServeConn(conn)
 	}
 }
 
