@@ -139,7 +139,7 @@ func createEvaluationString(node *hashgraph.Node, rpcCallsSoFar int, startOfGoss
 	str := "\n#### EVAL ####" +
 		"\n\tGossip Runtime:" + strconv.FormatFloat(gossipDuration, 'f', 5, 64) + " (sec)" +
 		"\n\tGossip Count:" + strconv.Itoa(rpcCallsSoFar) +
-		"\n\tAvg. Gossip/sec:" + strconv.FormatFloat(gossipDuration, 'f', 5, 64) +
+		"\n\tAvg. Gossip/sec:" + strconv.FormatFloat(float64(rpcCallsSoFar)/gossipDuration, 'f', 5, 64) +
 		"\n\tAvg. Latency: " + strconv.FormatFloat(latencyAvg, 'f', 5, 64) + " (sec)" +
 		"\n\tNum. of Events : " + strconv.Itoa(numEvents) +
 		"\n\tNum. of Consensus Events : " + strconv.Itoa(len(node.ConsensusEvents)) +
