@@ -364,7 +364,7 @@ func (n *Node) FindOrder() {
 				for _, w := range witnesses {
 					z := w
 					for !isInitial(z) {
-						if z.Round < r {
+						if z.Round < e.Round {
 							// if z is lower than e, e can't be ancestor of z
 							break
 						}
@@ -405,7 +405,7 @@ func (n *Node) FindOrder() {
 // If we can reach to target using downward edges only, we can see it. Downward in this case means that we reach through either parent. This function is used for voting
 func (n *Node) see(current *Event, target *Event) bool {
 	if verbose == 1 && current == nil {
-		fmt.Printf("NIL GELIYORUM LANNNNNNNNNNNNNNNNNNNN\n")
+		fmt.Printf("i am nil\n")
 
 	}
 

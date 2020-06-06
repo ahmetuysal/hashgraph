@@ -83,11 +83,11 @@ func NewDLedger(port string, peersFilePath string) *DLedger {
 
 	for addr := range myNode.Hashgraph {
 		myNode.Witnesses[addr] = make(map[uint32]*hashgraph.Event)
+		myNode.FirstEventOfNotConsensusIndex[addr] = 0 // index 0 for the initial event
 	}
 	myNode.Witnesses[initialEvent.Owner][1] = &initialEvent
 	myNode.Events[initialEvent.Signature] = &initialEvent
 	myNode.FirstRoundOfFameUndecided[initialEvent.Owner] = 1
-	myNode.FirstEventOfNotConsensusIndex[initialEvent.Owner] = 0 // index 0 for the initial event
 
 	// Setup the server
 	_ = rpc.Register(myNode)
