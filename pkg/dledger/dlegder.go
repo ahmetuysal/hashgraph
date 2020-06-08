@@ -17,7 +17,7 @@ import (
 
 const (
 	evaluationMode             = true                   // flag to indicate evaluation mode. Performance metrics are measured and printed in evaluation mode.
-	gossipWaitTime             = 250 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
+	gossipWaitTime             = 100 * time.Millisecond // the amount of time.sleep milliseconds between each random gossip
 	connectionAttemptDelayTime = 100 * time.Millisecond // the amount of time.sleep milliseconds between each connection attempt
 	printPerMrpcCall           = 20                     // After per this many RPC calls, print out evaluations
 )
